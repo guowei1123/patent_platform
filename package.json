@@ -1,6 +1,7 @@
 {
   "name": "patent-platform",
   "version": "0.1.0",
+  "packageManager": "pnpm@10.32.1",
   "private": true,
   "scripts": {
     "build": "next build",
@@ -79,6 +80,7 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.1.9",
+    "@types/adm-zip": "^0.5.8",
     "@types/node": "^22",
     "@types/pg": "^8.16.0",
     "@types/react": "^19",
