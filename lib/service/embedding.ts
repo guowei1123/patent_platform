@@ -8,12 +8,17 @@ const langfuseHandler = new CallbackHandler();
 
 /**
  * 创建 OpenAI Compatible Embedding 模型实例
+ * 支持与 Chat 模型独立的 API Key 和 Base URL 配置
+ * 优先使用 OPENAI_EMBEDDING_API_KEY / OPENAI_EMBEDDING_BASE_URL,
+ * 未配置时回退到 OPENAI_API_KEY / OPENAI_BASE_URL 以保持向后兼容
  */
 const embeddings = new OpenAIEmbeddings({
   modelName: process.env.OPENAI_EMBEDDING_MODEL,
-  openAIApiKey: process.env.OPENAI_API_KEY,
+  openAIApiKey:
+    process.env.OPENAI_EMBEDDING_API_KEY || process.env.OPENAI_API_KEY,
   configuration: {
-    baseURL: process.env.OPENAI_BASE_URL,
+    baseURL:
+      process.env.OPENAI_EMBEDDING_BASE_URL || process.env.OPENAI_BASE_URL,
   },
 });
 
@@ -51,9 +56,13 @@ export async function getEmbeddings(texts: string[]): Promise<number[][]> {
 
 export async function getImageEmbedding(image: string): Promise<number[]> {
   try {
-    const apiKey = process.env.OPENAI_API_KEY;
+    // 图像 Embedding 同属 Embedding 服务,优先使用独立的 Embedding API Key
+    const apiKey =
+      process.env.OPENAI_EMBEDDING_API_KEY || process.env.OPENAI_API_KEY;
     if (!apiKey) {
-      throw new Error("Missing API Key (OPENAI_API_KEY)");
+      throw new Error(
+        "Missing API Key (OPENAI_EMBEDDING_API_KEY or OPENAI_API_KEY)",
+      );
     }
 
     const model = process.env.OPENAI_IMAGE_EMBEDDING_MODEL || "";
