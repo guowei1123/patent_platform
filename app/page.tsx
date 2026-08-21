@@ -1,7 +1,10 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { ChatSidebar } from "@/components/chat-sidebar";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  ChatSidebar,
+  type ChatHistoryItem,
+} from "@/components/chat-sidebar";
 import { ChatInput } from "@/components/chat-input";
 import { ChatMessage, type Message } from "@/components/chat-message";
 import { SearchFormulaWorkflow } from "@/components/workflows/search-formula-workflow";
@@ -10,7 +13,6 @@ import { DisclosureWorkflow } from "@/components/workflows/disclosure-workflow";
 import { AnalysisWorkflow } from "@/components/workflows/analysis-workflow";
 import { KeywordSearchWorkflow } from "@/components/workflows/keyword-search-workflow";
 import { Button } from "@/components/ui/button";
-import { streamQAAnswer } from "@/lib/service/chat";
 import { toast } from "sonner";
 import { Loader2 } from "lucide-react";
 
@@ -44,9 +46,24 @@ const getAIResponse = (userMessage: string, tool?: string): string => {
   return "您好！我是专利智能助手，专注于为您提供专利相关的专业服务。我可以帮助您：\n\n• 生成精准的专利检索式\n• 撰写规范的专利交底书\n• 制作详细的专利检索报告\n• 深度解析专利技术方案\n\n请告诉我您需要什么帮助，或选择底部的专业工具开始使用。";
 };
 
+const AGENT_THREAD_STORAGE_KEY = "patent-agent-thread-id";
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+
+interface RestoredMessage {
+  id: string;
+  role: "user" | "assistant";
+  content: string;
+  timestamp: string;
+}
+
 export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [isHistoryLoading, setIsHistoryLoading] = useState(true);
+  const [isChatHistoryLoading, setIsChatHistoryLoading] = useState(true);
+  const [chatHistory, setChatHistory] = useState<ChatHistoryItem[]>([]);
+  const [threadId, setThreadId] = useState<string>();
   const [showSearchFormula, setShowSearchFormula] = useState(false);
   const [showReport, setShowReport] = useState(false);
   const [showDisclosure, setShowDisclosure] = useState(false);
@@ -56,6 +73,92 @@ export default function Home() {
   const [uploadedFileName, setUploadedFileName] = useState<string>("");
   const [searchQuery, setSearchQuery] = useState<string>("");
   const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const activeRequestRef = useRef<AbortController | null>(null);
+
+  const loadChatHistory = useCallback(async (signal?: AbortSignal) => {
+    const response = await fetch("/api/patent-agent", { signal });
+    if (!response.ok) throw new Error("历史对话列表加载失败");
+
+    const data = (await response.json()) as {
+      threads?: ChatHistoryItem[];
+    };
+    const threads = data.threads || [];
+    setChatHistory(threads);
+    return threads;
+  }, []);
+
+  // 先读取当前用户的历史线程，再恢复上次打开的对话。
+  useEffect(() => {
+    const controller = new AbortController();
+
+    const initializeChat = async () => {
+      let threads: ChatHistoryItem[] = [];
+      try {
+        threads = await loadChatHistory(controller.signal);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        console.error("加载历史对话列表失败:", error);
+        toast.error("历史对话列表加载失败，您仍可开始新对话");
+      } finally {
+        if (!controller.signal.aborted) setIsChatHistoryLoading(false);
+      }
+
+      if (controller.signal.aborted) return;
+      const storedThreadId = window.localStorage.getItem(
+        AGENT_THREAD_STORAGE_KEY,
+      );
+      const canRestoreStoredThread =
+        storedThreadId &&
+        UUID_PATTERN.test(storedThreadId) &&
+        (threads.length === 0 ||
+          threads.some((thread) => thread.id === storedThreadId));
+      const currentThreadId = canRestoreStoredThread
+        ? storedThreadId
+        : threads[0]?.id || crypto.randomUUID();
+
+      window.localStorage.setItem(AGENT_THREAD_STORAGE_KEY, currentThreadId);
+      setThreadId(currentThreadId);
+    };
+
+    void initializeChat();
+    return () => controller.abort();
+  }, [loadChatHistory]);
+
+  // 从 Mastra Memory 恢复当前线程最近的消息。
+  useEffect(() => {
+    if (!threadId) return;
+
+    const controller = new AbortController();
+    setIsHistoryLoading(true);
+
+    const restoreHistory = async () => {
+      try {
+        const response = await fetch(
+          `/api/patent-agent?threadId=${encodeURIComponent(threadId)}`,
+          { signal: controller.signal },
+        );
+        if (!response.ok) throw new Error("对话记录加载失败");
+
+        const data = (await response.json()) as {
+          messages?: RestoredMessage[];
+        };
+        const restoredMessages = (data.messages || []).map((message) => ({
+          ...message,
+          timestamp: new Date(message.timestamp),
+        }));
+        setMessages(restoredMessages);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        console.error("恢复对话记录失败:", error);
+        toast.error("历史对话恢复失败，您仍可开始新对话");
+      } finally {
+        if (!controller.signal.aborted) setIsHistoryLoading(false);
+      }
+    };
+
+    void restoreHistory();
+    return () => controller.abort();
+  }, [threadId]);
 
   // 自动滚动到底部
   useEffect(() => {
@@ -105,6 +208,11 @@ export default function Home() {
       return;
     }
 
+    if (!tool && (!threadId || isHistoryLoading)) {
+      toast.info("正在准备对话，请稍候");
+      return;
+    }
+
     // 添加用户消息
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -130,32 +238,53 @@ export default function Home() {
       return;
     }
 
-    // 默认对话模式：调用 Server Action
+    // 默认对话模式：调用 Mastra 专利智能体
+    if (!threadId) return;
+
     setIsLoading(true);
+    const requestController = new AbortController();
+    activeRequestRef.current = requestController;
+    let assistantMsgId: string | undefined;
+    let assistantContent = "";
+
     try {
-      // 准备历史记录 (去除当前这条，因为 Server Action 签名是 question + history)
-      // 注意：这里 history 应该包含之前的 user 和 assistant 消息
-      const history = messages.map((m) => ({
-        role: m.role as "user" | "assistant",
-        content: m.content,
-      }));
+      const response = await fetch("/api/patent-agent", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ message: content, threadId }),
+        signal: requestController.signal,
+      });
 
-      const stream = await streamQAAnswer(content, history);
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        throw new Error(body?.error || "智能体调用失败");
+      }
 
-      const assistantMsgId = (Date.now() + 1).toString();
-      let assistantContent = "";
+      if (!response.body) {
+        throw new Error("智能体未返回可读取的响应流");
+      }
+
+      const nextAssistantMessageId = (Date.now() + 1).toString();
+      assistantMsgId = nextAssistantMessageId;
 
       setMessages((prev) => [
         ...prev,
         {
-          id: assistantMsgId,
+          id: nextAssistantMessageId,
           role: "assistant",
           content: "",
           timestamp: new Date(),
         },
       ]);
 
-      for await (const chunk of stream) {
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value, { stream: true });
         if (chunk) {
           assistantContent += chunk;
           setMessages((prev) => {
@@ -173,11 +302,35 @@ export default function Home() {
           });
         }
       }
+
+      const finalChunk = decoder.decode();
+      if (finalChunk) {
+        assistantContent += finalChunk;
+        setMessages((prev) =>
+          prev.map((msg) =>
+            msg.id === assistantMsgId
+              ? { ...msg, content: assistantContent }
+              : msg,
+          ),
+        );
+      }
     } catch (error) {
+      if (error instanceof DOMException && error.name === "AbortError") return;
       console.error("对话出错:", error);
+      if (assistantMsgId && !assistantContent) {
+        setMessages((prev) =>
+          prev.filter((message) => message.id !== assistantMsgId),
+        );
+      }
       toast.error("发生错误，请稍后重试");
     } finally {
-      setIsLoading(false);
+      if (activeRequestRef.current === requestController) {
+        activeRequestRef.current = null;
+        setIsLoading(false);
+      }
+      void loadChatHistory().catch((error) => {
+        console.error("刷新历史对话列表失败:", error);
+      });
     }
   };
 
@@ -192,17 +345,56 @@ export default function Home() {
   };
 
   const handleNewChat = () => {
+    activeRequestRef.current?.abort();
+    activeRequestRef.current = null;
+    setIsLoading(false);
+    const newThreadId = crypto.randomUUID();
+    const now = new Date().toISOString();
+    window.localStorage.setItem(AGENT_THREAD_STORAGE_KEY, newThreadId);
+    setThreadId(newThreadId);
     setMessages([]);
+    setChatHistory((previous) => [
+      {
+        id: newThreadId,
+        title: "新对话",
+        createdAt: now,
+        updatedAt: now,
+      },
+      ...previous.filter((chat) => chat.id !== newThreadId),
+    ]);
     handleBackFromWorkflow();
     setUploadedFileNames([]);
-    toast.success("对话已重置");
+    toast.success("已创建新对话");
+  };
+
+  const handleSelectChat = (selectedThreadId: string) => {
+    handleBackFromWorkflow();
+    if (selectedThreadId === threadId) return;
+
+    activeRequestRef.current?.abort();
+    activeRequestRef.current = null;
+    setIsLoading(false);
+    setMessages([]);
+    window.localStorage.setItem(
+      AGENT_THREAD_STORAGE_KEY,
+      selectedThreadId,
+    );
+    setThreadId(selectedThreadId);
+  };
+
+  const sidebarProps = {
+    chats: chatHistory,
+    activeChatId: threadId,
+    isLoading: isChatHistoryLoading,
+    onNewChat: handleNewChat,
+    onSelectChat: handleSelectChat,
   };
 
   // 如果正在进行专利检索式工作流，显示专用页面
   if (showSearchFormula) {
     return (
       <div className="flex h-screen bg-background">
-        <ChatSidebar />
+        <ChatSidebar {...sidebarProps} />
         <div className="flex flex-1 flex-col">
           <SearchFormulaWorkflow
             fileName={uploadedFileName}
@@ -217,7 +409,7 @@ export default function Home() {
   if (showReport) {
     return (
       <div className="flex h-screen bg-background">
-        <ChatSidebar />
+        <ChatSidebar {...sidebarProps} />
         <div className="flex flex-1 flex-col">
           <ReportWorkflow
             fileName={uploadedFileName}
@@ -232,7 +424,7 @@ export default function Home() {
   if (showDisclosure) {
     return (
       <div className="flex h-screen bg-background">
-        <ChatSidebar />
+        <ChatSidebar {...sidebarProps} />
         <div className="flex flex-1 flex-col">
           <DisclosureWorkflow
             fileName={uploadedFileName}
@@ -247,7 +439,7 @@ export default function Home() {
   if (showAnalysis) {
     return (
       <div className="flex h-screen bg-background">
-        <ChatSidebar />
+        <ChatSidebar {...sidebarProps} />
         <div className="flex flex-1 flex-col">
           <AnalysisWorkflow
             fileNames={uploadedFileNames}
@@ -262,7 +454,7 @@ export default function Home() {
   if (showKeywordSearch) {
     return (
       <div className="flex h-screen bg-background">
-        <ChatSidebar />
+        <ChatSidebar {...sidebarProps} />
         <div className="flex flex-1 flex-col">
           <KeywordSearchWorkflow
             initialQuery={searchQuery}
@@ -276,7 +468,7 @@ export default function Home() {
   return (
     <div className="flex h-screen bg-background">
       {/* Sidebar */}
-      <ChatSidebar onNewChat={handleNewChat} />
+      <ChatSidebar {...sidebarProps} />
 
       {/* Main Content */}
       <div className="flex flex-1 flex-col">
@@ -286,7 +478,12 @@ export default function Home() {
         {/* Chat Area */}
         <main className="flex flex-1 flex-col overflow-hidden">
           <div className="flex-1 overflow-y-auto" ref={scrollAreaRef}>
-            {messages.length === 0 ? (
+            {isHistoryLoading ? (
+              <div className="flex h-full items-center justify-center gap-2 text-sm text-muted-foreground">
+                <Loader2 className="h-4 w-4 animate-spin" />
+                正在恢复对话...
+              </div>
+            ) : messages.length === 0 ? (
               /* Welcome Message */
               <div className="flex h-full flex-col items-center justify-center text-center px-4">
                 <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
@@ -339,7 +536,10 @@ export default function Home() {
 
           {/* Chat Input - Fixed at bottom */}
           <div className="bg-background">
-            <ChatInput onSend={handleSendMessage} />
+            <ChatInput
+              onSend={handleSendMessage}
+              disabled={isLoading || isHistoryLoading || !threadId}
+            />
           </div>
         </main>
 

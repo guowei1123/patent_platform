@@ -1,15 +1,25 @@
-import { useState, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import type {
   ContentBlock,
   KeywordDefinition,
   AIWarning,
   ProblemDetectionResult,
+  Step,
 } from "./types";
 import { callStreamAPI, fileToBase64, detectImage } from "./service";
 
 export function useDisclosureWorkflow() {
-  const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
+  const [step, setStep] = useState<Step>(1);
+  const [workflowRunId, setWorkflowRunId] = useState<string>();
+  const [suspendedStepId, setSuspendedStepId] = useState<string>();
+  const [workflowStatus, setWorkflowStatus] = useState<string>("draft");
+  const [isWorkflowTransitioning, setIsWorkflowTransitioning] = useState(false);
+  const [workflowDocument, setWorkflowDocument] = useState<{
+    filename: string;
+    contentType: string;
+    base64: string;
+  }>();
 
   // Step 1: 基本信息
   const [inventionName, setInventionName] = useState("");
@@ -51,6 +61,68 @@ export function useDisclosureWorkflow() {
 
   // Step 5: 导出状态
   const [isExporting, setIsExporting] = useState(false);
+
+  const applyWorkflowDraft = (draft: any) => {
+    if (!draft) return;
+    setInventionName(draft.inventionName || "");
+    setContactPerson(draft.contactPerson || "");
+    setApplicationType(draft.applicationType || "");
+    setTechnicalField(draft.technicalField || "");
+    setExistingProblems(draft.existingProblems || "");
+    setTechBackground(draft.techBackground || "");
+    setContentBlocks(
+      Array.isArray(draft.contentBlocks) && draft.contentBlocks.length > 0
+        ? draft.contentBlocks
+        : [{ id: "1", type: "text", content: "" }],
+    );
+    setKeywords(Array.isArray(draft.keywords) ? draft.keywords : []);
+    setAiWarnings(Array.isArray(draft.aiWarnings) ? draft.aiWarnings : []);
+    setProblemDetectionResult({
+      content: draft.problemDetection || "",
+      isLoading: false,
+    });
+    setBeneficialEffects(draft.beneficialEffects || "");
+    setProtectionPoints(draft.protectionPoints || "");
+  };
+
+  const applyWorkflowResponse = (result: any) => {
+    if (result.runId) {
+      setWorkflowRunId(result.runId);
+      window.localStorage.setItem("patent-disclosure-run-id", result.runId);
+    }
+    if (result.step) setStep(result.step as Step);
+    setSuspendedStepId(result.suspendedStep);
+    setWorkflowStatus(result.status || "draft");
+    if (result.document) setWorkflowDocument(result.document);
+    applyWorkflowDraft(result.draft);
+  };
+
+  useEffect(() => {
+    const runId = window.localStorage.getItem("patent-disclosure-run-id");
+    if (!runId) return;
+
+    const controller = new AbortController();
+    const restoreRun = async () => {
+      try {
+        const response = await fetch(
+          `/api/disclosure/workflow?runId=${encodeURIComponent(runId)}`,
+          { signal: controller.signal },
+        );
+        if (response.status === 404) {
+          window.localStorage.removeItem("patent-disclosure-run-id");
+          return;
+        }
+        if (!response.ok) throw new Error("交底书流程恢复失败");
+        applyWorkflowResponse(await response.json());
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
+        console.error("恢复交底书流程失败:", error);
+        toast.error("未能恢复上次的交底书流程");
+      }
+    };
+    void restoreRun();
+    return () => controller.abort();
+  }, []);
 
   // 获取技术方案文本
   const getTechSolutionText = () => {
@@ -133,12 +205,11 @@ export function useDisclosureWorkflow() {
       ),
     );
 
+    let persistentImageUrl = URL.createObjectURL(file);
     try {
-      // 生成预览URL
-      const url = URL.createObjectURL(file);
-
-      // 转换图片为base64
+      // Base64 可以随 Workflow Run 持久化，刷新页面后仍能恢复图片。
       const imageBase64 = await fileToBase64(file);
+      persistentImageUrl = imageBase64;
 
       // 调用图片检测API
       const detectionResult = await detectImage(imageBase64);
@@ -149,7 +220,7 @@ export function useDisclosureWorkflow() {
           block.id === id
             ? {
                 ...block,
-                imageUrl: url,
+                imageUrl: persistentImageUrl,
                 content: file.name,
                 detectionResult,
                 isDetecting: false,
@@ -172,13 +243,12 @@ export function useDisclosureWorkflow() {
       console.error("图片处理失败:", error);
 
       // 更新图片块（只设置预览，不设置检测结果）
-      const url = URL.createObjectURL(file);
       setContentBlocks(
         contentBlocks.map((block) =>
           block.id === id
             ? {
                 ...block,
-                imageUrl: url,
+                imageUrl: persistentImageUrl,
                 content: file.name,
                 isDetecting: false,
               }
@@ -467,6 +537,78 @@ export function useDisclosureWorkflow() {
     setKeywords(keywords.filter((_, i) => i !== index));
   };
 
+  const createWorkflowDraft = () => ({
+    inventionName,
+    contactPerson,
+    applicationType,
+    technicalField,
+    existingProblems,
+    techBackground,
+    contentBlocks: contentBlocks.map(({ isDetecting: _isDetecting, ...block }) =>
+      block,
+    ),
+    keywords,
+    aiWarnings,
+    problemDetection: problemDetectionResult.content,
+    beneficialEffects,
+    protectionPoints,
+  });
+
+  const requestWorkflowTransition = async (approved = false) => {
+    const body = workflowRunId
+      ? {
+          action: "resume",
+          runId: workflowRunId,
+          stepId: suspendedStepId,
+          draft: createWorkflowDraft(),
+          approved,
+        }
+      : {
+          action: "start",
+          draft: createWorkflowDraft(),
+        };
+    const response = await fetch("/api/disclosure/workflow", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    const result = await response.json().catch(() => null);
+    if (!response.ok) {
+      throw new Error(result?.error || "交底书流程执行失败");
+    }
+    applyWorkflowResponse(result);
+    return result;
+  };
+
+  const handleNextStep = async () => {
+    if (isWorkflowTransitioning || step >= 5) return;
+    if (workflowRunId && !suspendedStepId) {
+      toast.error("服务端流程状态异常，请重新打开交底书");
+      return;
+    }
+
+    setIsWorkflowTransitioning(true);
+    try {
+      await requestWorkflowTransition();
+      toast.success("已保存并进入下一步");
+    } catch (error) {
+      console.error("交底书流程推进失败:", error);
+      toast.error(error instanceof Error ? error.message : "无法进入下一步");
+    } finally {
+      setIsWorkflowTransitioning(false);
+    }
+  };
+
+  const handlePreviousStep = () => {
+    if (step !== 2) return;
+    window.localStorage.removeItem("patent-disclosure-run-id");
+    setWorkflowRunId(undefined);
+    setSuspendedStepId(undefined);
+    setWorkflowStatus("draft");
+    setWorkflowDocument(undefined);
+    setStep(1);
+  };
+
   // DOCX模板导出功能
   const handleExportDocx = async () => {
     // 验证必填字段
@@ -478,35 +620,37 @@ export function useDisclosureWorkflow() {
     setIsExporting(true);
 
     try {
-      const techSolutionText = getTechSolutionText();
-
-      const response = await fetch("/api/disclosure/template-export", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          inventionName,
-          contactPerson,
-          applicationType,
-          technicalField,
-          techBackground,
-          technicalSolution: techSolutionText,
-          beneficialEffects,
-          protectionPoints,
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error("导出失败");
+      let exportedDocument = workflowDocument;
+      if (workflowStatus !== "success") {
+        if (!workflowRunId || suspendedStepId !== "review-and-approve") {
+          throw new Error("交底书尚未进入人工预览确认阶段");
+        }
+        const workflowResult = await requestWorkflowTransition(true);
+        exportedDocument = workflowResult.document;
+      } else if (!exportedDocument && workflowRunId) {
+        const response = await fetch(
+          `/api/disclosure/workflow?runId=${encodeURIComponent(workflowRunId)}`,
+        );
+        if (response.ok) {
+          const workflowResult = await response.json();
+          applyWorkflowResponse(workflowResult);
+          exportedDocument = workflowResult.document;
+        }
+      }
+      if (!exportedDocument?.base64) {
+        throw new Error("服务端未生成交底书文件");
       }
 
-      // 创建Blob并下载
-      const blob = await response.blob();
+      const binary = window.atob(exportedDocument.base64);
+      const bytes = new Uint8Array(binary.length);
+      for (let index = 0; index < binary.length; index++) {
+        bytes[index] = binary.charCodeAt(index);
+      }
+      const blob = new Blob([bytes], { type: exportedDocument.contentType });
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
       a.href = url;
-      a.download = `专利交底书-${inventionName}.docx`;
+      a.download = exportedDocument.filename;
       document.body.appendChild(a);
       a.click();
       a.remove();
@@ -524,7 +668,8 @@ export function useDisclosureWorkflow() {
   return {
     // State
     step,
-    setStep,
+    workflowStatus,
+    isWorkflowTransitioning,
     inventionName,
     setInventionName,
     contactPerson,
@@ -571,6 +716,8 @@ export function useDisclosureWorkflow() {
     deleteKeyword,
     generateBeneficialEffects,
     generateProtectionPoints,
+    handleNextStep,
+    handlePreviousStep,
     handleExportDocx,
   };
 }

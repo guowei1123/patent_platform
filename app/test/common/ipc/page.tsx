@@ -1,13 +1,13 @@
 "use client";
 
 import {
-  createIPC,
-  getIPCList,
-  getIPCVector,
-  deleteIPC,
-  searchSimilarIPCs,
-  IPC,
-} from "@/lib/service/ipc";
+  deleteClassificationIPC,
+  getClassificationIPCList,
+  getClassificationIPCVector,
+  saveClassificationIPC,
+  searchClassificationIPCs,
+  type ClassificationIPC as IPC,
+} from "@/lib/service/classification-ipc";
 import {
   Table,
   TableBody,
@@ -106,7 +106,11 @@ function IPCPageContent() {
     setLoading(true);
     try {
       setIsSemanticSearch(false);
-      const result = await getIPCList(page, pageSizeParam, codeParam);
+      const result = await getClassificationIPCList(
+        page,
+        pageSizeParam,
+        codeParam,
+      );
       setData(result.data);
       setTotal(result.total);
     } catch (error) {
@@ -148,7 +152,7 @@ function IPCPageContent() {
     }
     setLoading(true);
     try {
-      const results = await searchSimilarIPCs(searchCode, 10);
+      const results = await searchClassificationIPCs(searchCode, 10);
       const ipcs = results.map((doc) => ({
         ...doc.metadata,
         similarity: doc.metadata.similarity,
@@ -181,7 +185,7 @@ function IPCPageContent() {
 
     setSubmitting(true);
     try {
-      await createIPC({
+      await saveClassificationIPC({
         code,
         level,
         description_zh: descriptionZh,
@@ -235,7 +239,7 @@ function IPCPageContent() {
   const confirmDelete = async () => {
     if (!deleteId) return;
     try {
-      await deleteIPC(deleteId);
+      await deleteClassificationIPC(deleteId);
       toast.success("删除成功");
       setDeleteOpen(false);
       loadData();
@@ -246,7 +250,7 @@ function IPCPageContent() {
 
   const handleCopyVector = async (code: string) => {
     try {
-      const vector = await getIPCVector(code);
+      const vector = await getClassificationIPCVector(code);
       if (vector) {
         await navigator.clipboard.writeText(JSON.stringify(vector));
         toast.success("向量已复制到剪贴板");

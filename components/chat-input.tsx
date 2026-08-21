@@ -66,9 +66,10 @@ const tools: Tool[] = [
 
 interface ChatInputProps {
   onSend?: (message: string, tool?: string) => void;
+  disabled?: boolean;
 }
 
-export function ChatInput({ onSend }: ChatInputProps) {
+export function ChatInput({ onSend, disabled = false }: ChatInputProps) {
   const [message, setMessage] = useState("");
   const [selectedTool, setSelectedTool] = useState<string | null>(null);
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
@@ -126,6 +127,8 @@ export function ChatInput({ onSend }: ChatInputProps) {
   };
 
   const handleSend = () => {
+    if (disabled) return;
+
     // 专利交底书直接进入工作流
     if (selectedTool === "disclosure") {
       onSend?.("开始专利交底书流程", selectedTool);
@@ -287,6 +290,7 @@ export function ChatInput({ onSend }: ChatInputProps) {
               value={message}
               onChange={(e) => setMessage(e.target.value)}
               onKeyDown={handleKeyDown}
+              disabled={disabled}
               placeholder={getPlaceholderText()}
               className="w-full resize-none bg-transparent text-foreground placeholder:text-muted-foreground focus:outline-none min-h-[60px] max-h-[200px]"
               rows={2}
@@ -301,6 +305,7 @@ export function ChatInput({ onSend }: ChatInputProps) {
             {tools.map((tool) => (
               <button
                 key={tool.id}
+                disabled={disabled}
                 onClick={() => {
                   // 专利交底书直接触发工作流
                   if (tool.id === "disclosure") {
@@ -327,7 +332,8 @@ export function ChatInput({ onSend }: ChatInputProps) {
             <Button
               onClick={handleSend}
               disabled={
-                needsFileUpload ? uploadedFiles.length === 0 : !message.trim()
+                disabled ||
+                (needsFileUpload ? uploadedFiles.length === 0 : !message.trim())
               }
               size="icon"
               className={cn(

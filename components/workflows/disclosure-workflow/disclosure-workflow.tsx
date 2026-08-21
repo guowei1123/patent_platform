@@ -17,8 +17,15 @@ interface DisclosureWorkflowProps {
 }
 
 function DisclosureWorkflowContent({ onBack }: { onBack: () => void }) {
-  const { step, setStep, handleExportDocx, isExporting } =
-    useDisclosureContext();
+  const {
+    step,
+    workflowStatus,
+    isWorkflowTransitioning,
+    handleNextStep,
+    handlePreviousStep,
+    handleExportDocx,
+    isExporting,
+  } = useDisclosureContext();
 
   return (
     <div className="flex h-full flex-col bg-background">
@@ -38,10 +45,19 @@ function DisclosureWorkflowContent({ onBack }: { onBack: () => void }) {
               专利交底书
             </h1>
             <p className="text-sm text-muted-foreground">
-              AI 辅助制作专利交底书
+              AI 辅助制作专利交底书 · 服务端流程
             </p>
           </div>
         </div>
+        <span className="rounded-full bg-primary/10 px-3 py-1 text-xs text-primary">
+          {workflowStatus === "draft"
+            ? "尚未启动"
+            : workflowStatus === "suspended"
+              ? "等待填写"
+              : workflowStatus === "success"
+                ? "已完成"
+                : "处理中"}
+        </span>
       </header>
 
       {/* Progress Steps */}
@@ -113,15 +129,25 @@ function DisclosureWorkflowContent({ onBack }: { onBack: () => void }) {
         <div className="mx-auto flex max-w-4xl items-center justify-between">
           <Button
             variant="outline"
-            onClick={() => setStep((s) => Math.max(1, s - 1) as any)}
-            disabled={step === 1}
+            onClick={handlePreviousStep}
+            disabled={step === 1 || step > 2 || isWorkflowTransitioning}
           >
             上一步
           </Button>
 
           {step < 5 ? (
-            <Button onClick={() => setStep((s) => Math.min(5, s + 1) as any)}>
-              下一步
+            <Button
+              onClick={handleNextStep}
+              disabled={isWorkflowTransitioning}
+            >
+              {isWorkflowTransitioning ? (
+                <>
+                  <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                  服务端处理中...
+                </>
+              ) : (
+                "保存并进入下一步"
+              )}
             </Button>
           ) : (
             <Button onClick={handleExportDocx} disabled={isExporting}>
