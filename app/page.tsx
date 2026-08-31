@@ -71,6 +71,7 @@ export default function Home() {
   const [showKeywordSearch, setShowKeywordSearch] = useState(false);
   const [uploadedFileNames, setUploadedFileNames] = useState<string[]>([]);
   const [uploadedFileName, setUploadedFileName] = useState<string>("");
+  const [reportFile, setReportFile] = useState<File | null>(null);
   const [searchQuery, setSearchQuery] = useState<string>("");
   const scrollAreaRef = useRef<HTMLDivElement>(null);
   const activeRequestRef = useRef<AbortController | null>(null);
@@ -167,7 +168,11 @@ export default function Home() {
     }
   }, [messages, isLoading]);
 
-  const handleSendMessage = async (content: string, tool?: string) => {
+  const handleSendMessage = async (
+    content: string,
+    tool?: string,
+    files?: File[],
+  ) => {
     if (isLoading) return;
 
     // 如果是专利检索工具，直接打开关键词搜索工作流页面
@@ -189,6 +194,7 @@ export default function Home() {
     if (tool === "report" && content.startsWith("已上传文件：")) {
       const fileName = content.replace("已上传文件：", "");
       setUploadedFileName(fileName);
+      setReportFile(files?.[0] || null);
       setShowReport(true);
       return;
     }
@@ -341,6 +347,7 @@ export default function Home() {
     setShowAnalysis(false);
     setShowKeywordSearch(false);
     setUploadedFileName("");
+    setReportFile(null);
     setSearchQuery("");
   };
 
@@ -413,6 +420,7 @@ export default function Home() {
         <div className="flex flex-1 flex-col">
           <ReportWorkflow
             fileName={uploadedFileName}
+            file={reportFile}
             onBack={handleBackFromWorkflow}
           />
         </div>

@@ -65,7 +65,7 @@ const tools: Tool[] = [
 ];
 
 interface ChatInputProps {
-  onSend?: (message: string, tool?: string) => void;
+  onSend?: (message: string, tool?: string, files?: File[]) => void;
   disabled?: boolean;
 }
 
@@ -110,7 +110,9 @@ export function ChatInput({ onSend, disabled = false }: ChatInputProps) {
     const validExtensions =
       selectedTool === "analysis"
         ? [".doc", ".docx", ".pdf"]
-        : [".doc", ".docx"];
+        : selectedTool === "report"
+          ? [".docx"]
+          : [".doc", ".docx"];
 
     const validFiles = files.filter((file) => {
       const lowerName = file.name.toLowerCase();
@@ -138,7 +140,11 @@ export function ChatInput({ onSend, disabled = false }: ChatInputProps) {
 
     if (needsFileUpload && uploadedFiles.length > 0) {
       const fileNames = uploadedFiles.map((f) => f.name).join("、");
-      onSend?.(`已上传文件：${fileNames}`, selectedTool || undefined);
+      onSend?.(
+        `已上传文件：${fileNames}`,
+        selectedTool || undefined,
+        uploadedFiles,
+      );
       setUploadedFiles([]);
     } else if (!needsFileUpload && message.trim()) {
       onSend?.(message, selectedTool || undefined);
@@ -155,11 +161,21 @@ export function ChatInput({ onSend, disabled = false }: ChatInputProps) {
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
-    if (files.length > 0) {
+    const validFiles = files.filter((file) => {
+      const name = file.name.toLowerCase();
+      return selectedTool === "report"
+        ? name.endsWith(".docx")
+        : selectedTool === "analysis"
+          ? [".doc", ".docx", ".pdf"].some((extension) =>
+              name.endsWith(extension),
+            )
+          : [".doc", ".docx"].some((extension) => name.endsWith(extension));
+    });
+    if (validFiles.length > 0) {
       if (selectedTool === "analysis") {
-        setUploadedFiles((prev) => [...prev, ...files]);
+        setUploadedFiles((prev) => [...prev, ...validFiles]);
       } else {
-        setUploadedFiles([files[0]]);
+        setUploadedFiles([validFiles[0]]);
       }
     }
     // 重置 input value 以允许重复上传同一文件
@@ -180,18 +196,21 @@ export function ChatInput({ onSend, disabled = false }: ChatInputProps) {
     if (selectedTool === "analysis")
       return "点击或拖拽上传专利文件（支持多选）";
     if (selectedTool === "search-formula") return "点击或拖拽上传技术交底书";
-    if (selectedTool === "report") return "点击或拖拽上传技术交底书";
+    if (selectedTool === "report")
+      return "点击或拖拽上传专利交底书（自动解析）";
     return "点击或拖拽上传文件";
   };
 
   const getAcceptTypes = () => {
     if (selectedTool === "analysis") return ".doc,.docx,.pdf";
-    return ".doc,.docx";
+    return selectedTool === "report" ? ".docx" : ".doc,.docx";
   };
 
   const getFormatText = () => {
     if (selectedTool === "analysis") return "支持 DOC、DOCX、PDF 格式";
-    return "支持 DOC、DOCX 格式";
+    return selectedTool === "report"
+      ? "支持 DOCX 格式，最大 10MB"
+      : "支持 DOC、DOCX 格式";
   };
 
   const getPlaceholderText = () => {

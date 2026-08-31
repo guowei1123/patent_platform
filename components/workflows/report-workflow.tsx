@@ -52,7 +52,21 @@ import {
 
 interface ReportWorkflowProps {
   fileName: string;
+  file?: File | null;
   onBack: () => void;
+}
+
+interface ParsedDisclosure {
+  inventionName: string;
+  technicalField: string;
+  backgroundTechnology: string;
+  technicalProblem: string;
+  technicalSolution: string;
+  beneficialEffects: string;
+  keyTechnicalFeatures: string[];
+  searchKeywords: string[];
+  ipcSuggestions: IPCItem[];
+  sourceTextLength: number;
 }
 
 interface IPCItem {
@@ -77,10 +91,14 @@ interface PatentItem {
   applicant: string;
   publicationNumber: string;
   publicationDate: string;
+  abstract: string;
+  ipcCodes: string[];
   relevance: number;
   similarities: string;
   differences: string;
   category: "X" | "Y" | "A";
+  classificationConclusion?: string;
+  isClassifying?: boolean;
 }
 
 // IPC建议库
@@ -100,17 +118,6 @@ const ipcSuggestions: IPCItem[] = [
   { code: "G06F16", name: "信息检索；数据库结构" },
 ];
 
-// 扩展词建议映射
-const keywordSuggestions: Record<string, string[]> = {
-  人工智能: ["AI", "智能系统", "认知计算"],
-  机器学习: ["ML", "自动学习", "统计学习"],
-  深度学习: ["DL", "神经网络", "表示学习"],
-  神经网络: ["NN", "深度网络", "卷积网络"],
-  算法: ["方法", "模型", "技术"],
-  数据处理: ["数据分析", "信息处理", "数据挖掘"],
-  模型训练: ["训练方法", "学习过程", "优化训练"],
-};
-
 const templates: TemplateOption[] = [
   {
     id: "ipc-keywords",
@@ -127,44 +134,11 @@ const templates: TemplateOption[] = [
   },
 ];
 
-// 模拟专利数据
-const mockPatents: PatentItem[] = [
-  {
-    id: "1",
-    title: "一种基于深度学习的图像识别方法",
-    applicant: "某科技公司",
-    publicationNumber: "CN112345678A",
-    publicationDate: "2023-05-15",
-    relevance: 95,
-    similarities: "采用深度学习技术，使用神经网络进行特征提取",
-    differences: "未公开具体的网络结构优化方法",
-    category: "X",
-  },
-  {
-    id: "2",
-    title: "机器学习模型训练系统及方法",
-    applicant: "某研究院",
-    publicationNumber: "CN112345679A",
-    publicationDate: "2023-04-20",
-    relevance: 88,
-    similarities: "涉及模型训练流程，包含数据预处理步骤",
-    differences: "训练算法与本方案有显著差异",
-    category: "Y",
-  },
-  {
-    id: "3",
-    title: "神经网络优化算法",
-    applicant: "某大学",
-    publicationNumber: "CN112345680A",
-    publicationDate: "2023-03-10",
-    relevance: 82,
-    similarities: "使用优化算法提升模型性能",
-    differences: "应用领域不同，技术路线存在差异",
-    category: "A",
-  },
-];
-
-export function ReportWorkflow({ fileName, onBack }: ReportWorkflowProps) {
+export function ReportWorkflow({
+  fileName,
+  file,
+  onBack,
+}: ReportWorkflowProps) {
   const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
 
   // 提案名称（自动生成，可修改）- 移到步骤4
@@ -197,16 +171,23 @@ export function ReportWorkflow({ fileName, onBack }: ReportWorkflowProps) {
   const [newKeyword, setNewKeyword] = useState("");
   const [suggestedWords, setSuggestedWords] = useState<string[]>([]);
   const [activeKeyword, setActiveKeyword] = useState<string | null>(null);
+  const [isFetchingSuggestions, setIsFetchingSuggestions] = useState(false);
+  const [parsedDisclosure, setParsedDisclosure] =
+    useState<ParsedDisclosure | null>(null);
+  const [isParsingDisclosure, setIsParsingDisclosure] = useState(Boolean(file));
+  const [disclosureParseError, setDisclosureParseError] = useState("");
 
   // Step 2: 生成检索式（默认选择第一个模板）
   const [selectedTemplate, setSelectedTemplate] = useState<string | null>(
     "ipc-keywords",
   );
   const [generatedFormula, setGeneratedFormula] = useState<string>("");
+  const [isGeneratingFormula, setIsGeneratingFormula] = useState(false);
 
   // Step 3: 检索相关文件
   const [selectedPatents, setSelectedPatents] = useState<string[]>([]);
   const [isSearching, setIsSearching] = useState(false);
+  const [searchError, setSearchError] = useState("");
   const [searchResults, setSearchResults] = useState<PatentItem[]>([]);
   const [originalSearchResults, setOriginalSearchResults] = useState<
     PatentItem[]
@@ -224,15 +205,24 @@ export function ReportWorkflow({ fileName, onBack }: ReportWorkflowProps) {
     "高" | "中" | "低" | "无" | ""
   >("");
   const [proposalGrade, setProposalGrade] = useState<
-    "A" | "B" | "C" | "不通过" | ""
+    "A" | "B" | "C" | "不通过" | "不适用" | "需人工确认" | ""
   >("");
   const [conclusion, setConclusion] = useState("");
   const [enforcementability, setEnforcementability] = useState<
     "高" | "低" | "无" | ""
   >("");
+  const [isUsedOnProduct, setIsUsedOnProduct] = useState(false);
+  const [isUsedOnMarketProduct, setIsUsedOnMarketProduct] = useState(false);
+  const [isStandardEssentialPatent, setIsStandardEssentialPatent] =
+    useState(false);
+  const [isGeneratingConclusion, setIsGeneratingConclusion] = useState(false);
+  const [isEvaluatingProposal, setIsEvaluatingProposal] = useState(false);
+  const [evaluationTrace, setEvaluationTrace] = useState<string[]>([]);
 
   // Step 5: 预览与导出
   const [reportGenerated, setReportGenerated] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [exportError, setExportError] = useState("");
 
   // Auto-generate formula when entering step 2
   useEffect(() => {
@@ -247,6 +237,52 @@ export function ReportWorkflow({ fileName, onBack }: ReportWorkflowProps) {
       handleSearch();
     }
   }, [step]);
+
+  useEffect(() => {
+    if (!file) return;
+
+    let cancelled = false;
+    const parseDisclosure = async () => {
+      setIsParsingDisclosure(true);
+      setDisclosureParseError("");
+      try {
+        const formData = new FormData();
+        formData.append("file", file);
+        const response = await fetch("/api/report/disclosure-parse", {
+          method: "POST",
+          body: formData,
+        });
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || "交底书解析失败");
+        if (cancelled) return;
+
+        const parsed = payload as ParsedDisclosure;
+        setParsedDisclosure(parsed);
+        if (parsed.inventionName.trim()) {
+          setProposalName((current) => current || parsed.inventionName);
+        }
+        if (parsed.searchKeywords.length > 0) {
+          setKeywords(parsed.searchKeywords.map((word) => ({ word })));
+        }
+        if (parsed.ipcSuggestions.length > 0) {
+          setIPCList(parsed.ipcSuggestions);
+        }
+        setGeneratedFormula("");
+      } catch (error) {
+        if (!cancelled) {
+          setDisclosureParseError(
+            error instanceof Error ? error.message : "交底书解析失败",
+          );
+        }
+      } finally {
+        if (!cancelled) setIsParsingDisclosure(false);
+      }
+    };
+    void parseDisclosure();
+    return () => {
+      cancelled = true;
+    };
+  }, [file]);
 
   // IPC handlers
   const handleIPCInputChange = (value: string) => {
@@ -278,34 +314,58 @@ export function ReportWorkflow({ fileName, onBack }: ReportWorkflowProps) {
   const addKeyword = (word: string) => {
     if (word.trim() && !keywords.find((kw) => kw.word === word.trim())) {
       setKeywords([...keywords, { word: word.trim() }]);
-      const suggestions = (keywordSuggestions[word.trim()] || [])
-        .slice(0, 5)
-        .filter((w) => !keywords.find((kw) => kw.word === w));
-      setSuggestedWords(suggestions);
       setNewKeyword("");
+      setGeneratedFormula("");
     }
   };
 
   const deleteKeyword = (index: number) => {
     setKeywords(keywords.filter((_, i) => i !== index));
+    setGeneratedFormula("");
   };
 
-  const handleKeywordClick = (keyword: string) => {
+  const handleKeywordClick = async (keyword: string) => {
     if (activeKeyword === keyword) {
       setActiveKeyword(null);
       setSuggestedWords([]);
-    } else {
-      setActiveKeyword(keyword);
-      const suggestions = (keywordSuggestions[keyword] || [])
-        .slice(0, 5)
-        .filter((word) => !keywords.find((kw) => kw.word === word));
-      setSuggestedWords(suggestions);
+      return;
+    }
+    setActiveKeyword(keyword);
+    setSuggestedWords([]);
+    setIsFetchingSuggestions(true);
+    try {
+      const response = await fetch("/api/report/keyword-recommendation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ coreKeyword: keyword, desiredCount: 5 }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "扩展词生成失败");
+      const recommendations: string[] = Array.isArray(payload?.data?.recommendations)
+        ? payload.data.recommendations
+        : [];
+      const filtered = recommendations
+        .map((w) => w.trim())
+        .filter(Boolean)
+        .filter((w) => !keywords.find((kw) => kw.word === w))
+        .slice(0, 5);
+      // 仅在用户仍选中该关键词时回填结果
+      setActiveKeyword((current) =>
+        current === keyword ? keyword : current,
+      );
+      setSuggestedWords(filtered);
+    } catch (error) {
+      console.error("扩展词生成失败:", error);
+      setSuggestedWords([]);
+    } finally {
+      setIsFetchingSuggestions(false);
     }
   };
 
   const addSuggestedWord = (word: string) => {
     if (!keywords.find((kw) => kw.word === word)) {
       setKeywords([...keywords, { word }]);
+      setGeneratedFormula("");
       const updatedSuggestions = suggestedWords.filter((w) => w !== word);
       setSuggestedWords(updatedSuggestions);
       if (updatedSuggestions.length === 0) {
@@ -314,38 +374,151 @@ export function ReportWorkflow({ fileName, onBack }: ReportWorkflowProps) {
     }
   };
 
-  // Formula generation
-  const generateFormula = (templateId: string) => {
+  // Formula generation - 调用 /api/report/search-formula-generation
+  const generateFormula = async (templateId: string) => {
     const ipcCodes = ipcList.map((ipc) => ipc.code);
     const keywordsList = keywords.map((kw) => kw.word);
+    if (!keywordsList.length || !ipcCodes.length) return;
 
-    let formula = "";
-    switch (templateId) {
-      case "ipc-keywords":
-        const ipcPart = ipcCodes.map((code) => `IPC=${code}`).join(" OR ");
-        const keywordPart = keywordsList
-          .map((kw) => `TI=${kw} OR AB=${kw}`)
-          .join(" OR ");
-        formula = `(${ipcPart}) AND (${keywordPart})`;
-        break;
-      case "keywords-only":
-        const keywordsOnlyPart = keywordsList
-          .map((kw) => `TI=${kw} OR AB=${kw}`)
-          .join(" OR ");
-        formula = `(${keywordsOnlyPart})`;
-        break;
+    setIsGeneratingFormula(true);
+    try {
+      const response = await fetch("/api/report/search-formula-generation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          keywords: keywordsList,
+          ipcCodes,
+          outputFormat: templateId === "keywords-only" ? "format2" : "format1",
+          stream: false,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || "检索式生成失败");
+      const formula = payload?.formula || "";
+      setGeneratedFormula(formula);
+    } catch (error) {
+      console.error("检索式生成失败:", error);
+      setGeneratedFormula("");
+    } finally {
+      setIsGeneratingFormula(false);
     }
-    setGeneratedFormula(formula);
   };
 
-  // Patent search
-  const handleSearch = () => {
+  // Patent search - 调用 /api/report/patent-search 从 PostgreSQL 检索
+  const handleSearch = async () => {
+    const ipcCodes = ipcList.map((ipc) => ipc.code);
+    const keywordsList = keywords.map((kw) => kw.word);
+    if (!keywordsList.length && !ipcCodes.length) return;
+
     setIsSearching(true);
-    setTimeout(() => {
-      setSearchResults(mockPatents);
-      setOriginalSearchResults(mockPatents);
+    setSearchError("");
+    try {
+      const response = await fetch("/api/report/patent-search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          keywords: keywordsList,
+          ipcCodes,
+          limit: 20,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok)
+        throw new Error(payload?.error || "专利检索失败");
+      const results: PatentItem[] = (payload?.items || payload?.data || []).map((p: any) => ({
+        id: String(p.id),
+        title: p.title || "",
+        applicant: p.applicant || "",
+        publicationNumber: p.docNumber || "",
+        publicationDate: p.pubDate || "",
+        abstract: p.abstract || "",
+        ipcCodes: Array.isArray(p.ipcCodes) ? p.ipcCodes : [],
+        relevance: 0,
+        similarities: "",
+        differences: "",
+        category: "A" as const,
+      }));
+      setSearchResults(results);
+      setOriginalSearchResults(results);
+      // 异步对每条专利做对比文献分类
+      void classifyAllPatents(results);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "专利检索失败";
+      setSearchError(message);
+      setSearchResults([]);
+      setOriginalSearchResults([]);
+    } finally {
       setIsSearching(false);
-    }, 1500);
+    }
+  };
+
+  // 对比文献分类 - 调用 /api/report/document-relevance-classification
+  const classifyPatent = async (patent: PatentItem): Promise<Partial<PatentItem>> => {
+    const targetText = parsedDisclosure?.technicalSolution || parsedDisclosure?.technicalField || "";
+    const referenceText = [patent.title, patent.abstract].filter(Boolean).join("\n");
+    if (!targetText || !referenceText) return {};
+    try {
+      const response = await fetch("/api/report/document-relevance-classification", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetText, referenceText }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || "对比文献分类失败");
+      const category = (["X", "Y", "A"].includes(payload?.category) ? payload.category : "A") as
+        | "X"
+        | "Y"
+        | "A";
+      const similarities = Array.isArray(payload?.featureMappings)
+        ? payload.featureMappings
+            .filter((m: any) => m.assessment !== "未披露")
+            .map((m: any) => m.targetFeature)
+            .filter(Boolean)
+            .join("；")
+        : "";
+      const differences = Array.isArray(payload?.featureMappings)
+        ? payload.featureMappings
+            .filter((m: any) => m.assessment === "未披露")
+            .map((m: any) => m.targetFeature)
+            .filter(Boolean)
+            .join("；")
+        : "";
+      return {
+        category,
+        similarities: similarities || patent.similarities,
+        differences: differences || patent.differences,
+        classificationConclusion: payload?.conclusion || "",
+      };
+    } catch (error) {
+      console.error("对比文献分类失败:", error);
+      return {};
+    }
+  };
+
+  // 批量分类所有检索结果(限制并发为3)
+  const classifyAllPatents = async (patents: PatentItem[]) => {
+    const queue = [...patents];
+    const concurrency = 3;
+    const worker = async () => {
+      while (queue.length > 0) {
+        const patent = queue.shift();
+        if (!patent) break;
+        setSearchResults((prev) =>
+          prev.map((p) =>
+            p.id === patent.id ? { ...p, isClassifying: true } : p,
+          ),
+        );
+        const patch = await classifyPatent(patent);
+        setSearchResults((prev) =>
+          prev.map((p) =>
+            p.id === patent.id
+              ? { ...p, ...patch, isClassifying: false }
+              : p,
+          ),
+        );
+      }
+    };
+    await Promise.all(Array.from({ length: concurrency }, worker));
   };
 
   // Reset search results
@@ -361,22 +534,168 @@ export function ReportWorkflow({ fileName, onBack }: ReportWorkflowProps) {
     }
   };
 
-  // Manual trigger for conclusion generation
-  const handleAutoGenerateConclusion = () => {
-    const conclusionText =
-      `根据专利检索分析，本提案${proposalName || ""}的综合评估如下：\n\n` +
-      `经过检索共发现${searchResults.length}件相关专利文献，其中包含${searchResults.filter((p) => p.category === "X").length}件X类对比文件、${searchResults.filter((p) => p.category === "Y").length}件Y类对比文件、${searchResults.filter((p) => p.category === "A").length}件A类对比文件。\n\n` +
-      `【用途前景】${usageProspect || "未评估"}：${usageProspect === "高" ? "该技术方案具有较高的市场应用价值和广阔的发展前景。" : usageProspect === "低" ? "该技术方案的市场应用范围相对有限。" : usageProspect === "无" ? "暂无明确的应用前景。" : "需进一步评估。"}\n\n` +
-      `【授权前景】${authorizationProspect || "未评估"}：${authorizationProspect === "高" ? "技术方案具有良好的新颖性和创造性，授权前景乐观。" : authorizationProspect === "中" ? "技术方案具有一定的新颖性，授权可能性适中。" : authorizationProspect === "低" ? "现有技术较为接近，授权存在一定难度。" : authorizationProspect === "无" ? "不具备授权条件。" : "需进一步评估。"}\n\n` +
-      (standardAdaptation ? `【标准适配】已适配相关标准\n\n` : "") +
-      (vehicleApplication ? `【车型应用】适用于相关车型\n\n` : "") +
-      `【提案等级】${proposalGrade || "未评级"}${proposalGrade === "A" ? " - 建议优先推进" : proposalGrade === "B" ? " - 建议推进" : proposalGrade === "C" ? " - 建议谨慎推进" : proposalGrade === "不通过" ? " - 不建议推进" : ""}`;
-    setConclusion(conclusionText);
+  // 进入 Step4 时,基于检索结果自动评估提案等级
+  const handleAutoEvaluateProposal = async () => {
+    if (isEvaluatingProposal) return;
+    setIsEvaluatingProposal(true);
+    setEvaluationTrace([]);
+    try {
+      const relatedADocumentCount = searchResults.filter((p) => p.category === "A").length;
+      const inventionPointNames =
+        parsedDisclosure?.keyTechnicalFeatures && parsedDisclosure.keyTechnicalFeatures.length > 0
+          ? parsedDisclosure.keyTechnicalFeatures
+          : keywords.map((k) => k.word);
+      const hasAnyX = searchResults.some((p) => p.category === "X");
+      const yDocumentCount = searchResults.filter((p) => p.category === "Y").length;
+
+      const inventionPoints = inventionPointNames.map((name) => ({
+        name,
+        hasXDocument: hasAnyX,
+        yDocumentCount,
+        yCombinationObvious: false,
+        isCommonKnowledgeOrObvious: false,
+      }));
+
+      const response = await fetch("/api/report/proposal-grade-evaluation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          isUsedOnProduct,
+          isUsedOnMarketProduct,
+          enforceability: enforcementability || "无",
+          isStandardEssentialPatent,
+          relatedADocumentCount,
+          inventionPoints,
+        }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload?.error || "提案等级评估失败");
+      if (typeof payload?.usageProspect === "string")
+        setUsageProspect(payload.usageProspect as "高" | "低" | "无");
+      if (typeof payload?.authorizationProspect === "string")
+        setAuthorizationProspect(payload.authorizationProspect as "高" | "中" | "低" | "无");
+      if (typeof payload?.proposalGrade === "string")
+        setProposalGrade(payload.proposalGrade as "A" | "B" | "C" | "不通过" | "不适用" | "需人工确认");
+      if (Array.isArray(payload?.ruleTrace)) setEvaluationTrace(payload.ruleTrace);
+    } catch (error) {
+      console.error("提案等级评估失败:", error);
+    } finally {
+      setIsEvaluatingProposal(false);
+    }
+  };
+
+  // 进入 Step4 时自动触发一次评估
+  useEffect(() => {
+    if (step === 4 && searchResults.length > 0 && !proposalGrade) {
+      void handleAutoEvaluateProposal();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [step]);
+
+  // 结论生成 - 调用 /api/report/conclusion-generation (流式输出)
+  const handleAutoGenerateConclusion = async () => {
+    setIsGeneratingConclusion(true);
+    setConclusion("");
+    try {
+      const searchResultsSummary =
+        `共找到 ${searchResults.length} 件相关专利，` +
+        `其中 X 类 ${searchResults.filter((p) => p.category === "X").length} 件、` +
+        `Y 类 ${searchResults.filter((p) => p.category === "Y").length} 件、` +
+        `A 类 ${searchResults.filter((p) => p.category === "A").length} 件。`;
+      const keyPatentAnalysis = searchResults
+        .slice(0, 5)
+        .map(
+          (p) =>
+            `${p.publicationNumber}(${p.category}类): ${p.title}；相同点: ${p.similarities || "未标注"}；不同点: ${p.differences || "未标注"}`,
+        )
+        .join("\n");
+
+      const response = await fetch("/api/report/conclusion-generation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          searchTopic: proposalName || parsedDisclosure?.inventionName || "",
+          searchResults: searchResultsSummary,
+          keyPatentAnalysis,
+          patentMap: ipcList.map((i) => i.code).join(", ") || "暂无专利地图数据",
+          innovationAssessment:
+            `用途前景=${usageProspect || "未评估"};授权前景=${authorizationProspect || "未评估"};提案等级=${proposalGrade || "未评级"}`,
+        }),
+      });
+      if (!response.ok || !response.body) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload?.error || "结论生成失败");
+      }
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let acc = "";
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        acc += decoder.decode(value, { stream: true });
+        setConclusion(acc);
+      }
+    } catch (error) {
+      console.error("结论生成失败:", error);
+    } finally {
+      setIsGeneratingConclusion(false);
+    }
   };
 
   // Generate report
   const handleGenerateReport = () => {
     setReportGenerated(true);
+  };
+
+  // 导出报告 docx - 调用 /api/report/template-export
+  const handleDownloadReport = async () => {
+    setIsExporting(true);
+    setExportError("");
+    try {
+      const response = await fetch("/api/report/template-export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          proposalName,
+          ipcList: ipcList.map((i) => ({ code: i.code, name: i.name })),
+          generatedFormula,
+          searchResults: searchResults.map((p) => ({
+            publicationNumber: p.publicationNumber,
+            title: p.title,
+            applicant: p.applicant,
+            publicationDate: p.publicationDate,
+            similarities: p.similarities,
+            differences: p.differences,
+            category: p.category,
+          })),
+          standardAdaptation,
+          vehicleApplication,
+          usageProspect,
+          authorizationProspect,
+          proposalGrade,
+          conclusion,
+        }),
+      });
+      if (!response.ok) {
+        const payload = await response.json().catch(() => ({}));
+        throw new Error(payload?.error || "报告导出失败");
+      }
+      const blob = await response.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${proposalName || "专利检索报告"}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      setReportGenerated(true);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "报告导出失败";
+      setExportError(message);
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const copyFormula = () => {
@@ -457,6 +776,57 @@ export function ReportWorkflow({ fileName, onBack }: ReportWorkflowProps) {
           {/* Step 1: 生成检索关键词 (复用检索式逻辑) */}
           {step === 1 && (
             <div className="space-y-6">
+              {(isParsingDisclosure ||
+                disclosureParseError ||
+                parsedDisclosure) && (
+                <div className="rounded-lg border border-primary/30 bg-primary/5 p-6">
+                  <div className="mb-3 flex items-center gap-2">
+                    <FileSearch className="h-5 w-5 text-primary" />
+                    <h3 className="text-lg font-semibold text-foreground">
+                      交底书解析与评估依据
+                    </h3>
+                  </div>
+                  {isParsingDisclosure && (
+                    <p className="text-sm text-muted-foreground">
+                      正在提取技术要素并生成检索基础…
+                    </p>
+                  )}
+                  {disclosureParseError && (
+                    <p className="text-sm text-destructive">
+                      {disclosureParseError}
+                    </p>
+                  )}
+                  {parsedDisclosure && (
+                    <div className="space-y-4 text-sm">
+                      <div className="grid gap-3 sm:grid-cols-2">
+                        <p>
+                          <span className="font-medium">发明名称：</span>
+                          {parsedDisclosure.inventionName || "未识别"}
+                        </p>
+                        <p>
+                          <span className="font-medium">技术领域：</span>
+                          {parsedDisclosure.technicalField || "未识别"}
+                        </p>
+                      </div>
+                      <div>
+                        <p className="font-medium">可比对的关键技术特征</p>
+                        <ul className="mt-1 list-disc space-y-1 pl-5 text-muted-foreground">
+                          {parsedDisclosure.keyTechnicalFeatures.map(
+                            (item, index) => (
+                              <li key={index}>{item}</li>
+                            ),
+                          )}
+                        </ul>
+                      </div>
+                      <p className="text-xs text-muted-foreground">
+                        已自动填充下方 IPC/CPC
+                        与关键词；请校正后再生成检索式。新颖性和创造性判断将在检索并比对对比文献后进行。解析文本约{" "}
+                        {parsedDisclosure.sourceTextLength} 字。
+                      </p>
+                    </div>
+                  )}
+                </div>
+              )}
               {/* IPC/CPC */}
               <div className="rounded-lg border border-border bg-card p-6">
                 <div className="mb-4 flex items-center gap-2">
@@ -622,6 +992,14 @@ export function ReportWorkflow({ fileName, onBack }: ReportWorkflowProps) {
                         </div>
                       </div>
                     )}
+
+                    {isFetchingSuggestions && (
+                      <div className="rounded-lg bg-accent/30 p-3 text-center">
+                        <p className="text-xs text-muted-foreground">
+                          正在调用大模型生成扩展词…
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </div>
               </div>
@@ -668,21 +1046,45 @@ export function ReportWorkflow({ fileName, onBack }: ReportWorkflowProps) {
                 </div>
               </div>
 
-              {generatedFormula && (
+              {isGeneratingFormula && (
+                <div className="rounded-lg border border-primary bg-primary/5 p-6">
+                  <div className="flex items-center gap-3">
+                    <div className="h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
+                    <p className="text-sm text-muted-foreground">
+                      大模型正在按 IncoPat 标准生成检索式…
+                    </p>
+                  </div>
+                </div>
+              )}
+
+              {!isGeneratingFormula && generatedFormula && (
                 <div className="rounded-lg border border-primary bg-primary/5 p-6">
                   <div className="mb-3 flex items-center justify-between">
                     <h3 className="font-semibold text-foreground">
                       生成的检索式
                     </h3>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={copyFormula}
-                      className="gap-2 bg-transparent"
-                    >
-                      <FileText className="h-4 w-4" />
-                      复制
-                    </Button>
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() =>
+                          selectedTemplate && generateFormula(selectedTemplate)
+                        }
+                        className="gap-2 bg-transparent"
+                      >
+                        <Sparkles className="h-4 w-4" />
+                        重新生成
+                      </Button>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={copyFormula}
+                        className="gap-2 bg-transparent"
+                      >
+                        <FileText className="h-4 w-4" />
+                        复制
+                      </Button>
+                    </div>
                   </div>
                   <Textarea
                     value={generatedFormula}
@@ -703,47 +1105,81 @@ export function ReportWorkflow({ fileName, onBack }: ReportWorkflowProps) {
                   <h2 className="text-xl font-semibold text-foreground">
                     检索专利文献
                   </h2>
-                  {originalSearchResults.length > 0 && (
-                    <AlertDialog>
-                      <AlertDialogTrigger asChild>
-                        <Button
-                          variant="outline"
-                          className="gap-2 bg-transparent"
-                        >
-                          <ArrowLeft className="h-4 w-4" />
-                          重置
-                        </Button>
-                      </AlertDialogTrigger>
-                      <AlertDialogContent>
-                        <AlertDialogHeader>
-                          <AlertDialogTitle>确认重置</AlertDialogTitle>
-                          <AlertDialogDescription>
-                            该操作将抹去列表中的所有修改
-                          </AlertDialogDescription>
-                        </AlertDialogHeader>
-                        <AlertDialogFooter>
-                          <AlertDialogCancel>取消</AlertDialogCancel>
-                          <AlertDialogAction onClick={handleResetResults}>
-                            确认
-                          </AlertDialogAction>
-                        </AlertDialogFooter>
-                      </AlertDialogContent>
-                    </AlertDialog>
-                  )}
+                  <div className="flex gap-2">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={() => void handleSearch()}
+                      disabled={isSearching}
+                      className="gap-2 bg-transparent"
+                    >
+                      <Search className="h-4 w-4" />
+                      重新检索
+                    </Button>
+                    {originalSearchResults.length > 0 && (
+                      <AlertDialog>
+                        <AlertDialogTrigger asChild>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            className="gap-2 bg-transparent"
+                          >
+                            <ArrowLeft className="h-4 w-4" />
+                            重置
+                          </Button>
+                        </AlertDialogTrigger>
+                        <AlertDialogContent>
+                          <AlertDialogHeader>
+                            <AlertDialogTitle>确认重置</AlertDialogTitle>
+                            <AlertDialogDescription>
+                              该操作将抹去列表中的所有修改
+                            </AlertDialogDescription>
+                          </AlertDialogHeader>
+                          <AlertDialogFooter>
+                            <AlertDialogCancel>取消</AlertDialogCancel>
+                            <AlertDialogAction onClick={handleResetResults}>
+                              确认
+                            </AlertDialogAction>
+                          </AlertDialogFooter>
+                        </AlertDialogContent>
+                      </AlertDialog>
+                    )}
+                  </div>
                 </div>
 
                 {isSearching && (
                   <div className="flex flex-col items-center justify-center py-12">
                     <div className="mb-4 h-12 w-12 animate-spin rounded-full border-4 border-primary border-t-transparent"></div>
-                    <p className="text-muted-foreground">正在检索专利文献...</p>
+                    <p className="text-muted-foreground">正在从 PostgreSQL 数据库检索专利文献...</p>
+                  </div>
+                )}
+
+                {!isSearching && searchError && (
+                  <div className="rounded-lg border border-destructive bg-destructive/5 p-4">
+                    <p className="text-sm text-destructive">{searchError}</p>
+                  </div>
+                )}
+
+                {!isSearching && !searchError && searchResults.length === 0 && (
+                  <div className="rounded-lg bg-accent/30 p-6 text-center">
+                    <p className="text-sm text-muted-foreground">
+                      暂无检索结果，请确认关键词/IPC 分类后重新检索
+                    </p>
                   </div>
                 )}
 
                 {searchResults.length > 0 && (
                   <div className="space-y-4">
-                    <p className="text-sm text-muted-foreground">
-                      共找到 {searchResults.length} 条相关专利
-                    </p>
+                    <div className="flex items-center justify-between">
+                      <p className="text-sm text-muted-foreground">
+                        共找到 {searchResults.length} 条相关专利
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        X:{searchResults.filter((p) => p.category === "X").length}{" "}
+                        Y:{searchResults.filter((p) => p.category === "Y").length}{" "}
+                        A:{searchResults.filter((p) => p.category === "A").length}
+                      </p>
+                    </div>
                     <div className="overflow-hidden rounded-lg border border-border">
                       <table className="w-full">
                         <thead className="bg-accent/50">
@@ -775,10 +1211,41 @@ export function ReportWorkflow({ fileName, onBack }: ReportWorkflowProps) {
                                 <div className="space-y-1">
                                   <div className="font-mono text-sm font-medium text-primary">
                                     {patent.publicationNumber}
+                                    {patent.publicationDate && (
+                                      <span className="ml-2 text-xs text-muted-foreground">
+                                        {patent.publicationDate}
+                                      </span>
+                                    )}
                                   </div>
                                   <div className="text-sm font-medium text-foreground">
                                     {patent.title}
                                   </div>
+                                  {patent.applicant && (
+                                    <div className="text-xs text-muted-foreground">
+                                      申请人：{patent.applicant}
+                                    </div>
+                                  )}
+                                  {patent.ipcCodes.length > 0 && (
+                                    <div className="text-xs text-muted-foreground">
+                                      IPC：{patent.ipcCodes.join(", ")}
+                                    </div>
+                                  )}
+                                  {patent.abstract && (
+                                    <p className="mt-1 line-clamp-2 text-xs text-muted-foreground">
+                                      {patent.abstract}
+                                    </p>
+                                  )}
+                                  {patent.isClassifying && (
+                                    <p className="mt-1 text-xs text-primary">
+                                      正在调用对比文献分类模型…
+                                    </p>
+                                  )}
+                                  {!patent.isClassifying &&
+                                    patent.classificationConclusion && (
+                                      <p className="mt-1 text-xs text-muted-foreground">
+                                        分类结论：{patent.classificationConclusion}
+                                      </p>
+                                    )}
                                 </div>
                               </td>
                               <td className="px-4 py-4 text-sm text-foreground max-w-xs">
@@ -794,7 +1261,7 @@ export function ReportWorkflow({ fileName, onBack }: ReportWorkflowProps) {
                                     className="min-h-[80px]"
                                   />
                                 ) : (
-                                  patent.similarities
+                                  patent.similarities || "—"
                                 )}
                               </td>
                               <td className="px-4 py-4 text-sm text-foreground max-w-xs">
@@ -810,7 +1277,7 @@ export function ReportWorkflow({ fileName, onBack }: ReportWorkflowProps) {
                                     className="min-h-[80px]"
                                   />
                                 ) : (
-                                  patent.differences
+                                  patent.differences || "—"
                                 )}
                               </td>
                               <td className="px-4 py-4 text-center">
@@ -904,12 +1371,30 @@ export function ReportWorkflow({ fileName, onBack }: ReportWorkflowProps) {
                                         <Button
                                           variant="ghost"
                                           size="icon"
+                                          disabled={patent.isClassifying}
+                                          onClick={async () => {
+                                            setSearchResults((prev) =>
+                                              prev.map((p) =>
+                                                p.id === patent.id
+                                                  ? { ...p, isClassifying: true }
+                                                  : p,
+                                              ),
+                                            );
+                                            const patch = await classifyPatent(patent);
+                                            setSearchResults((prev) =>
+                                              prev.map((p) =>
+                                                p.id === patent.id
+                                                  ? { ...p, ...patch, isClassifying: false }
+                                                  : p,
+                                              ),
+                                            );
+                                          }}
                                           className="h-8 w-8 text-muted-foreground hover:text-primary"
                                         >
                                           <FileSearch className="h-4 w-4" />
                                         </Button>
                                       </TooltipTrigger>
-                                      <TooltipContent>解析专利</TooltipContent>
+                                      <TooltipContent>对比文献分类</TooltipContent>
                                     </Tooltip>
 
                                     <Tooltip>
@@ -969,6 +1454,94 @@ export function ReportWorkflow({ fileName, onBack }: ReportWorkflowProps) {
                       placeholder="提案名称（可修改）"
                       className="w-full rounded-lg border border-border bg-background px-4 py-2 text-foreground outline-none transition-colors focus:border-primary"
                     />
+                  </div>
+
+                  {/* 评估依据 */}
+                  <div className="rounded-lg border border-border bg-accent/20 p-4">
+                    <div className="mb-3 flex items-center justify-between">
+                      <h3 className="text-sm font-semibold text-foreground">
+                        规则评估依据
+                      </h3>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => void handleAutoEvaluateProposal()}
+                        disabled={isEvaluatingProposal || searchResults.length === 0}
+                        className="gap-2 bg-transparent"
+                      >
+                        {isEvaluatingProposal ? (
+                          <>
+                            <div className="h-3 w-3 animate-spin rounded-full border border-primary border-t-transparent"></div>
+                            评估中
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="h-4 w-4" />
+                            重新评估
+                          </>
+                        )}
+                      </Button>
+                    </div>
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={isUsedOnProduct}
+                          onChange={(e) => setIsUsedOnProduct(e.target.checked)}
+                          className="h-4 w-4 rounded border-border text-primary focus:ring-2 focus:ring-primary"
+                        />
+                        <span className="text-sm text-foreground">已用于产品/计划用于具体车型</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={isUsedOnMarketProduct}
+                          onChange={(e) => setIsUsedOnMarketProduct(e.target.checked)}
+                          className="h-4 w-4 rounded border-border text-primary focus:ring-2 focus:ring-primary"
+                        />
+                        <span className="text-sm text-foreground">已用于上市车型</span>
+                      </label>
+                      <label className="flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={isStandardEssentialPatent}
+                          onChange={(e) => setIsStandardEssentialPatent(e.target.checked)}
+                          className="h-4 w-4 rounded border-border text-primary focus:ring-2 focus:ring-primary"
+                        />
+                        <span className="text-sm text-foreground">标准必要专利 (SEP)</span>
+                      </label>
+                      <div>
+                        <label className="mb-1 block text-xs font-medium text-muted-foreground">
+                          维权性
+                        </label>
+                        <div className="flex gap-2">
+                          {["高", "低", "无"].map((option) => (
+                            <button
+                              key={option}
+                              onClick={() => setEnforcementability(option as any)}
+                              className={cn(
+                                "flex-1 rounded-md border px-2 py-1 text-xs font-medium transition-all",
+                                enforcementability === option
+                                  ? "border-primary bg-primary/10 text-primary"
+                                  : "border-border bg-background text-foreground hover:bg-accent",
+                              )}
+                            >
+                              {option}
+                            </button>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                    {evaluationTrace.length > 0 && (
+                      <div className="mt-3 rounded-md bg-background p-3 text-xs text-muted-foreground">
+                        <p className="mb-1 font-medium text-foreground">规则轨迹</p>
+                        <ul className="space-y-1 list-disc pl-4">
+                          {evaluationTrace.map((item, idx) => (
+                            <li key={idx}>{item}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    )}
                   </div>
 
                   {/* 标准适配 和 车型应用 */}
@@ -1054,8 +1627,8 @@ export function ReportWorkflow({ fileName, onBack }: ReportWorkflowProps) {
                     <label className="mb-2 block text-sm font-medium text-foreground">
                       提案等级
                     </label>
-                    <div className="flex gap-3">
-                      {["A", "B", "C", "不通过"].map((option) => (
+                    <div className="flex flex-wrap gap-3">
+                      {["A", "B", "C", "不通过", "不适用", "需人工确认"].map((option) => (
                         <button
                           key={option}
                           onClick={() => setProposalGrade(option as any)}
@@ -1078,9 +1651,15 @@ export function ReportWorkflow({ fileName, onBack }: ReportWorkflowProps) {
                       <label className="text-sm font-medium text-foreground">
                         结论
                       </label>
-                      {conclusion.trim() ? (
-                        <AlertDialog>
-                          <AlertDialogTrigger asChild>
+                      <div className="flex items-center gap-2">
+                        {isGeneratingConclusion && (
+                          <span className="text-xs text-muted-foreground">
+                            大模型流式生成中…
+                          </span>
+                        )}
+                        {conclusion.trim() && !isGeneratingConclusion ? (
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
                             <Button
                               variant="ghost"
                               size="sm"
@@ -1107,22 +1686,28 @@ export function ReportWorkflow({ fileName, onBack }: ReportWorkflowProps) {
                             </AlertDialogFooter>
                           </AlertDialogContent>
                         </AlertDialog>
-                      ) : (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          onClick={handleAutoGenerateConclusion}
-                          className="h-8 gap-2 text-primary hover:text-primary/90"
-                        >
-                          <Sparkles className="h-4 w-4" />
-                          生成结论
-                        </Button>
-                      )}
+                        ) : (
+                          <Button
+                            variant="ghost"
+                            size="sm"
+                            onClick={handleAutoGenerateConclusion}
+                            disabled={isGeneratingConclusion}
+                            className="h-8 gap-2 text-primary hover:text-primary/90"
+                          >
+                            {isGeneratingConclusion ? (
+                              <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary border-t-transparent"></div>
+                            ) : (
+                              <Sparkles className="h-4 w-4" />
+                            )}
+                            生成结论
+                          </Button>
+                        )}
+                      </div>
                     </div>
                     <textarea
                       value={conclusion}
                       onChange={(e) => setConclusion(e.target.value)}
-                      placeholder="结论将根据上述信息自动生成，您也可以手动修改..."
+                      placeholder="结论将根据上述信息通过大模型自动生成，您也可以手动修改..."
                       rows={12}
                       className="w-full rounded-lg border border-border bg-background px-4 py-3 text-sm text-foreground outline-none transition-colors focus:border-primary resize-none"
                     />
@@ -1145,10 +1730,15 @@ export function ReportWorkflow({ fileName, onBack }: ReportWorkflowProps) {
                       检索报告已生成
                     </h2>
                     <p className="text-sm text-muted-foreground">
-                      您可以直接下载报告
+                      点击下方"下载报告 (DOCX)"以通过 template-export 模板生成文档
                     </p>
                   </div>
                 </div>
+                {exportError && (
+                  <div className="mb-4 rounded-lg border border-destructive bg-destructive/5 p-3">
+                    <p className="text-sm text-destructive">{exportError}</p>
+                  </div>
+                )}
                 <div className="space-y-4">
                   {/* 1. 提案名称 */}
                   <div className="rounded-lg border border-border bg-background p-4">
@@ -1235,10 +1825,10 @@ export function ReportWorkflow({ fileName, onBack }: ReportWorkflowProps) {
                                 {patent.title}
                               </td>
                               <td className="px-4 py-2 text-sm text-foreground">
-                                {patent.similarities}
+                                {patent.similarities || "—"}
                               </td>
                               <td className="px-4 py-2 text-sm text-foreground">
-                                {patent.differences}
+                                {patent.differences || "—"}
                               </td>
                               <td className="px-4 py-2 text-center">
                                 <span
@@ -1310,8 +1900,16 @@ export function ReportWorkflow({ fileName, onBack }: ReportWorkflowProps) {
               <ArrowRight className="h-4 w-4" />
             </Button>
           ) : (
-            <Button className="gap-2">
-              <Download className="h-4 w-4" />
+            <Button
+              onClick={() => void handleDownloadReport()}
+              disabled={isExporting}
+              className="gap-2"
+            >
+              {isExporting ? (
+                <div className="h-4 w-4 animate-spin rounded-full border-2 border-primary-foreground border-t-transparent"></div>
+              ) : (
+                <Download className="h-4 w-4" />
+              )}
               下载报告 (DOCX)
             </Button>
           )}

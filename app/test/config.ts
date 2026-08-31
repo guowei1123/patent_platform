@@ -70,6 +70,11 @@ export const testConfig: TestMenuItem[] = [
     icon: FileText,
     items: [
       {
+        title: "专利检索",
+        url: "/test/report/patent-search",
+        icon: Search,
+      },
+      {
         title: "关键词推荐",
         url: "/test/report/keyword-recommendation",
         icon: Tag,
@@ -94,6 +99,21 @@ export const testConfig: TestMenuItem[] = [
         url: "/test/report/template-export",
         icon: AlertTriangle,
       },
+      {
+        title: "提案分级规则判定",
+        url: "/test/report/proposal-grade-evaluation",
+        icon: Sparkles,
+      },
+      {
+        title: "交底书解析",
+        url: "/test/report/disclosure-parse",
+        icon: FileText,
+      },
+      {
+        title: "对比文献 X/Y/A 分类",
+        url: "/test/report/document-relevance-classification",
+        icon: FileText,
+      },
     ],
   },
   {
@@ -101,17 +121,10 @@ export const testConfig: TestMenuItem[] = [
     icon: MessageSquare,
     items: [
       {
-        title: "专利知识问答助手",
+        title: "通用问答",
         url: "/test/qa",
-        icon: MessageSquare,
+        icon: FileText,
       },
-    ],
-  },
-  {
-    title: "专利解析",
-    icon: Search,
-    items: [
-      // 预留位置，暂时为空，或者可以加一个待开发的页面
     ],
   },
   {
