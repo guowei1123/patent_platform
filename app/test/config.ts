@@ -94,6 +94,26 @@ export const testConfig: TestMenuItem[] = [
         url: "/test/report/template-export",
         icon: AlertTriangle,
       },
+       {
+        title: "专利交底书解析",
+        url: "/test/report/disclosure-parse",
+        icon: AlertTriangle,
+      },
+        {
+        title: "文献X|Y|A类型判断",
+        url: "/test/report/document-relevance-classification",
+        icon: Tag,
+      },
+         {
+        title: "专利检索",
+        url: "/test/report/patent-search",
+        icon: Tag,
+      },
+        {
+        title: "提案等级判断",
+        url: "/test/report/proposal-grade-evaluation",
+        icon: Tag,
+      },
     ],
   },
   {
