@@ -7,7 +7,6 @@ import {
   Sparkles,
   Image,
   Binary,
-  MessageSquare,
   AlertTriangle,
 } from "lucide-react";
 
@@ -117,21 +116,14 @@ export const testConfig: TestMenuItem[] = [
     ],
   },
   {
-    title: "专利知识问答",
-    icon: MessageSquare,
-    items: [
-      {
-        title: "专利知识问答助手",
-        url: "/test/qa",
-        icon: MessageSquare,
-      },
-    ],
-  },
-  {
     title: "专利解析",
     icon: Search,
     items: [
-      // 预留位置，暂时为空，或者可以加一个待开发的页面
+      {
+        title: "专利文件解析",
+        url: "/test/patent/parse",
+        icon: FileText,
+      },
     ],
   },
   {

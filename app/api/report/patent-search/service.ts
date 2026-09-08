@@ -18,12 +18,10 @@ export interface PatentSearchResponse {
   items: PatentSearchResult[];
 }
 
-export type PatentSortBy =
-  | "pub_date_desc"
-  | "pub_date_asc"
-  | "relevance";
+export type PatentSortBy = "pub_date_desc" | "pub_date_asc" | "relevance";
 
 export interface PatentSearchParams {
+  id?: string;
   /** 关键词列表(命中标题或摘要任一即可) */
   keywords?: string[];
   /** IPC 分类号前缀(如 G06F 匹配所有子类) */
@@ -73,6 +71,7 @@ export async function searchPatents(
   params: PatentSearchParams,
 ): Promise<PatentSearchResponse> {
   const {
+    id,
     keywords = [],
     ipcCodes = [],
     applicant,
@@ -89,6 +88,7 @@ export async function searchPatents(
 
   // 至少要有一个过滤条件,避免全表扫描
   if (
+    !id &&
     !kw.length &&
     !ipc.length &&
     !applicant &&
@@ -104,6 +104,11 @@ export async function searchPatents(
     const conditions: string[] = [];
     const paramsArr: unknown[] = [];
     let paramIdx = 1;
+    if (id) {
+      paramsArr.push(id);
+      conditions.push(`p.id = $${paramIdx}`);
+      paramIdx++;
+    }
 
     // 关键词命中标题或摘要(任一命中即可)
     if (kw.length) {
@@ -195,9 +200,10 @@ export async function searchPatents(
       kind: r.kind || "",
       title: r.title || "",
       abstract: r.abstract || "",
-      pubDate: r.pub_date instanceof Date
-        ? r.pub_date.toISOString().slice(0, 10)
-        : String(r.pub_date || ""),
+      pubDate:
+        r.pub_date instanceof Date
+          ? r.pub_date.toISOString().slice(0, 10)
+          : String(r.pub_date || ""),
       applicant: r.applicants || "",
       ipcCodes: r.ipc_codes ? r.ipc_codes.split(", ") : [],
     }));

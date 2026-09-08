@@ -2,6 +2,8 @@
 
 import { cn } from "@/lib/utils";
 import { User, Bot } from "lucide-react";
+import ReactMarkdown from "react-markdown";
+import type { RagResult, RagSource } from "@/lib/rag/types";
 
 export interface Message {
   id: string;
@@ -9,14 +11,35 @@ export interface Message {
   content: string;
   timestamp: Date;
   tool?: string;
+  rag?: RagResult;
 }
 
 interface ChatMessageProps {
   message: Message;
 }
 
+type SourceFileGroup = {
+  key: string;
+  title: string;
+  sources: RagSource[];
+};
+
+function groupSourcesByFile(sources: RagSource[]): SourceFileGroup[] {
+  const groups = new Map<string, SourceFileGroup>();
+  for (const source of sources) {
+    const key = `${source.knowledgeBaseId}:${source.knowledgeId}`;
+    const group = groups.get(key);
+    if (group) group.sources.push(source);
+    else groups.set(key, { key, title: source.title, sources: [source] });
+  }
+  return [...groups.values()];
+}
+
 export function ChatMessage({ message }: ChatMessageProps) {
   const isUser = message.role === "user";
+  const sourceFiles = message.rag
+    ? groupSourcesByFile(message.rag.sources)
+    : [];
 
   return (
     <div
@@ -51,8 +74,44 @@ export function ChatMessage({ message }: ChatMessageProps) {
             )}
           </div>
           <div className="prose prose-sm max-w-none text-foreground leading-relaxed">
-            <p className="whitespace-pre-wrap">{message.content}</p>
+            <ReactMarkdown>{message.content}</ReactMarkdown>
           </div>
+          {message.rag && (
+            <div className="space-y-2 border-t border-border pt-3 text-xs text-muted-foreground">
+              <p>
+                {message.rag.status === "disabled"
+                  ? "知识库未启用 · 当前回答仅供一般参考"
+                  : message.rag.status === "empty"
+                    ? "未检索到相关资料 · 当前问题缺少知识库依据"
+                    : `检索参考资料 · ${sourceFiles.length} 个文件 · 命中 ${message.rag.sources.length} 个片段`}
+              </p>
+              {sourceFiles.map((file) => (
+                <details
+                  key={file.key}
+                  className="rounded-md border border-border px-3 py-2"
+                >
+                  <summary className="cursor-pointer text-foreground">
+                    {file.title} · 命中 {file.sources.length} 个片段
+                  </summary>
+                  <div className="mt-2 space-y-2">
+                    {file.sources.map((source) => (
+                      <details
+                        key={source.id}
+                        className="rounded border border-border/70 px-2 py-1.5"
+                      >
+                        <summary className="cursor-pointer text-foreground">
+                          [{source.number}] 命中片段
+                        </summary>
+                        <p className="mt-2 whitespace-pre-wrap break-words leading-relaxed">
+                          {source.content}
+                        </p>
+                      </details>
+                    ))}
+                  </div>
+                </details>
+              ))}
+            </div>
+          )}
         </div>
       </div>
     </div>

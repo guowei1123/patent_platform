@@ -1,353 +1,717 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
-import { ChatSidebar } from "@/components/chat-sidebar";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { ChevronDown, ChevronUp, Loader2 } from "lucide-react";
+import { toast } from "sonner";
 import { ChatInput } from "@/components/chat-input";
 import { ChatMessage, type Message } from "@/components/chat-message";
-import { SearchFormulaWorkflow } from "@/components/workflows/search-formula-workflow";
-import { ReportWorkflow } from "@/components/workflows/report-workflow";
-import { DisclosureWorkflow } from "@/components/workflows/disclosure-workflow";
-import { AnalysisWorkflow } from "@/components/workflows/analysis-workflow";
-import { KeywordSearchWorkflow } from "@/components/workflows/keyword-search-workflow";
+import {
+  ChatSidebar,
+  type SidebarConversation,
+} from "@/components/chat-sidebar";
 import { Button } from "@/components/ui/button";
-import { streamQAAnswer } from "@/lib/service/chat";
-import { toast } from "sonner";
-import { Loader2 } from "lucide-react";
+import type { RagResult } from "@/lib/rag/types";
 
-// 工具名称映射
-const toolNames: Record<string, string> = {
-  "patent-search": "专利检索",
-  "search-formula": "专利检索式",
-  disclosure: "专利交底书",
-  report: "专利检索报告",
-  analysis: "专利解析",
+type Strategy = {
+  topic: string;
+  keywords: string[];
+  ipcCodes: string[];
+  limit: number;
+  explanation: string;
+};
+type Approval = { runId: string; toolCallId: string; strategy: Strategy };
+type Patent = {
+  id: string;
+  kind?: string;
+  title: string;
+  docNumber?: string;
+  applicant?: string;
+  pubDate?: string;
+  abstract?: string;
+  ipcCodes?: string[];
+};
+type StoredMessage = {
+  id?: string;
+  role: string;
+  content: unknown;
+  createdAt?: string;
 };
 
-// 模拟 AI 回复
-const getAIResponse = (userMessage: string, tool?: string): string => {
-  if (tool === "patent-search") {
-    return "我将为您进行全库专利检索。支持的检索方式包括：\n\n1. 关键词检索\n2. 申请人/发明人检索\n3. 分类号检索\n4. 语义检索\n\n请输入您想要检索的内容，例如“人工智能 图像识别”或“华为技术有限公司”。";
-  }
-  if (tool === "search-formula") {
-    return "根据您的需求，我为您生成以下专利检索式：\n\n(发明名称 OR 摘要) AND (技术特征 OR 关键词) AND (IPC分类号)\n\n这个检索式可以帮助您在专利数据库中精准定位相关技术。建议在使用时根据具体情况调整关键词和分类号。";
-  }
-  if (tool === "disclosure") {
-    return "我将帮助您撰写专利交底书。专利交底书通常包含以下部分：\n\n1. 技术领域\n2. 背景技术\n3. 发明内容\n4. 附图说明\n5. 具体实施方式\n\n请提供您的技术方案详细信息，我将协助您完成各部分内容的撰写。";
-  }
-  if (tool === "report") {
-    return "我将为您生成专利检索报告。报告将包括：\n\n1. 检索策略说明\n2. 相关专利列表\n3. 技术对比分析\n4. 新颖性评估\n5. 专利布局建议\n\n请提供您需要检索的技术主题和关键词。";
-  }
-  if (tool === "analysis") {
-    return "我将为您深度解析专利文献。分析内容包括：\n\n1. 技术问题\n2. 技术手段\n3. 技术效果\n\n请提供需要分析的专利号或上传专利文件。";
-  }
-
-  return "您好！我是专利智能助手，专注于为您提供专利相关的专业服务。我可以帮助您：\n\n• 生成精准的专利检索式\n• 撰写规范的专利交底书\n• 制作详细的专利检索报告\n• 深度解析专利技术方案\n\n请告诉我您需要什么帮助，或选择底部的专业工具开始使用。";
-};
-
-export default function Home() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const [showSearchFormula, setShowSearchFormula] = useState(false);
-  const [showReport, setShowReport] = useState(false);
-  const [showDisclosure, setShowDisclosure] = useState(false);
-  const [showAnalysis, setShowAnalysis] = useState(false);
-  const [showKeywordSearch, setShowKeywordSearch] = useState(false);
-  const [uploadedFileNames, setUploadedFileNames] = useState<string[]>([]);
-  const [uploadedFileName, setUploadedFileName] = useState<string>("");
-  const [searchQuery, setSearchQuery] = useState<string>("");
-  const scrollAreaRef = useRef<HTMLDivElement>(null);
-
-  // 自动滚动到底部
-  useEffect(() => {
-    if (scrollAreaRef.current) {
-      scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
-    }
-  }, [messages, isLoading]);
-
-  const handleSendMessage = async (content: string, tool?: string) => {
-    if (isLoading) return;
-
-    // 如果是专利检索工具，直接打开关键词搜索工作流页面
-    if (tool === "patent-search") {
-      setSearchQuery(content);
-      setShowKeywordSearch(true);
-      return;
-    }
-
-    // 如果是专利检索式工具且上传了文件，打开专用工作流页面
-    if (tool === "search-formula" && content.startsWith("已上传文件：")) {
-      const fileName = content.replace("已上传文件：", "");
-      setUploadedFileName(fileName);
-      setShowSearchFormula(true);
-      return;
-    }
-
-    // 如果是专利检索报告工具且上传了文件，打开专用工作流页面
-    if (tool === "report" && content.startsWith("已上传文件：")) {
-      const fileName = content.replace("已上传文件：", "");
-      setUploadedFileName(fileName);
-      setShowReport(true);
-      return;
-    }
-
-    // 如果是专利交底书工具，直接打开工作流页面
-    if (tool === "disclosure") {
-      setShowDisclosure(true);
-      return;
-    }
-
-    // 如果是专利解析工具且上传了文件，打开专用工作流页面
-    if (tool === "analysis" && content.startsWith("已上传文件：")) {
-      const fileNamesStr = content.replace("已上传文件：", "");
-      const fileNames = fileNamesStr.split("、");
-      setUploadedFileNames(fileNames);
-      setShowAnalysis(true);
-      return;
-    }
-
-    // 添加用户消息
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      role: "user",
-      content,
-      timestamp: new Date(),
-      tool: tool ? toolNames[tool] : undefined,
-    };
-
-    setMessages((prev) => [...prev, userMessage]);
-
-    // 如果有具体的 tool（但没有触发工作流），使用静态引导回复
-    if (tool) {
-      setTimeout(() => {
-        const aiMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          role: "assistant",
-          content: getAIResponse(content, tool),
-          timestamp: new Date(),
-        };
-        setMessages((prev) => [...prev, aiMessage]);
-      }, 500);
-      return;
-    }
-
-    // 默认对话模式：调用 Server Action
-    setIsLoading(true);
+function extractHistoryText(content: unknown): string {
+  let value = content;
+  if (typeof value === "string") {
+    const raw = value;
     try {
-      // 准备历史记录 (去除当前这条，因为 Server Action 签名是 question + history)
-      // 注意：这里 history 应该包含之前的 user 和 assistant 消息
-      const history = messages.map((m) => ({
-        role: m.role as "user" | "assistant",
-        content: m.content,
-      }));
+      value = JSON.parse(value) as unknown;
+    } catch {
+      return raw;
+    }
+  }
+  if (!value || typeof value !== "object") return "";
+  const record = value as Record<string, unknown>;
+  if (Array.isArray(record.parts)) {
+    return record.parts
+      .filter(
+        (part): part is Record<string, unknown> =>
+          Boolean(part) &&
+          typeof part === "object" &&
+          (part as Record<string, unknown>).type === "text",
+      )
+      .map((part) => (typeof part.text === "string" ? part.text : ""))
+      .join("")
+      .trim();
+  }
+  return typeof record.content === "string" ? record.content : "";
+}
 
-      const stream = await streamQAAnswer(content, history);
+export function AssistantWorkspace({ mode }: { mode: "qa" | "search" }) {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [conversations, setConversations] = useState<SidebarConversation[]>([]);
+  const [conversationId, setConversationId] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [approval, setApproval] = useState<Approval | null>(null);
+  const [editingStrategy, setEditingStrategy] = useState(false);
+  const [results, setResults] = useState<Patent[]>([]);
+  const [expandedPatentIds, setExpandedPatentIds] = useState<Set<string>>(
+    new Set(),
+  );
+  const scrollAreaRef = useRef<HTMLDivElement>(null);
+  const messageRefs = useRef(new Map<string, HTMLDivElement>());
+  const [messageStops, setMessageStops] = useState<
+    { id: string; position: number; label: string }[]
+  >([]);
+  const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
 
-      const assistantMsgId = (Date.now() + 1).toString();
-      let assistantContent = "";
+  const updateMessageNavigator = useCallback(() => {
+    const container = scrollAreaRef.current;
+    if (!container) return;
 
-      setMessages((prev) => [
-        ...prev,
+    const stops = messages.flatMap((message) => {
+      const element = messageRefs.current.get(message.id);
+      if (!element) return [];
+      return [
         {
-          id: assistantMsgId,
-          role: "assistant",
-          content: "",
-          timestamp: new Date(),
+          id: message.id,
+          position: Math.min(
+            1,
+            Math.max(
+              0,
+              element.offsetTop / Math.max(container.scrollHeight, 1),
+            ),
+          ),
+          label: message.content.replace(/\s+/g, " ").trim().slice(0, 48),
         },
-      ]);
+      ];
+    });
+    setMessageStops(stops);
 
-      for await (const chunk of stream) {
-        if (chunk) {
-          assistantContent += chunk;
-          setMessages((prev) => {
-            const newMessages = [...prev];
-            const lastIndex = newMessages.findIndex(
-              (m) => m.id === assistantMsgId,
-            );
-            if (lastIndex !== -1) {
-              newMessages[lastIndex] = {
-                ...newMessages[lastIndex],
-                content: assistantContent,
-              };
-            }
-            return newMessages;
-          });
+    const viewportFocus = container.scrollTop + container.clientHeight * 0.38;
+    const closest = stops.reduce<{ id: string; distance: number } | undefined>(
+      (current, stop) => {
+        const element = messageRefs.current.get(stop.id);
+        const distance = Math.abs((element?.offsetTop || 0) - viewportFocus);
+        return !current || distance < current.distance
+          ? { id: stop.id, distance }
+          : current;
+      },
+      undefined,
+    );
+    setActiveMessageId(closest?.id || null);
+  }, [messages]);
+
+  const loadConversations = async () => {
+    const response = await fetch("/api/agent/conversations");
+    if (!response.ok) throw new Error("读取历史失败");
+    setConversations(
+      ((await response.json()) as { items: SidebarConversation[] }).items,
+    );
+  };
+
+  useEffect(() => {
+    loadConversations().catch(() => toast.error("无法读取历史对话"));
+  }, [mode]);
+  useEffect(() => {
+    if (scrollAreaRef.current)
+      scrollAreaRef.current.scrollTop = scrollAreaRef.current.scrollHeight;
+  }, [messages, isLoading, approval, results]);
+
+  useEffect(() => {
+    const container = scrollAreaRef.current;
+    if (!container) return;
+    let frame = requestAnimationFrame(updateMessageNavigator);
+    const handleScroll = () => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(updateMessageNavigator);
+    };
+    const observer = new ResizeObserver(handleScroll);
+    observer.observe(container);
+    container.addEventListener("scroll", handleScroll, { passive: true });
+    return () => {
+      cancelAnimationFrame(frame);
+      observer.disconnect();
+      container.removeEventListener("scroll", handleScroll);
+    };
+  }, [updateMessageNavigator, approval, results]);
+
+  const setMessageRef = useCallback(
+    (id: string, element: HTMLDivElement | null) => {
+      if (element) messageRefs.current.set(id, element);
+      else messageRefs.current.delete(id);
+    },
+    [],
+  );
+
+  const scrollToMessage = (id: string) => {
+    const container = scrollAreaRef.current;
+    const element = messageRefs.current.get(id);
+    if (!container || !element) return;
+    container.scrollTo({
+      top: Math.max(0, element.offsetTop - 20),
+      behavior: "smooth",
+    });
+  };
+
+  const consumeStream = async (response: Response) => {
+    const reader = response.body?.getReader();
+    if (!reader) throw new Error("未获得智能体响应流");
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let assistantId: string | null = null;
+    let rag: RagResult | undefined;
+    const appendText = (content: string) => {
+      if (!assistantId) {
+        assistantId = crypto.randomUUID();
+        setMessages((current) => [
+          ...current,
+          {
+            id: assistantId!,
+            role: "assistant",
+            content: "",
+            timestamp: new Date(),
+            rag,
+          },
+        ]);
+      }
+      setMessages((current) =>
+        current.map((item) =>
+          item.id === assistantId
+            ? { ...item, content: item.content + content }
+            : item,
+        ),
+      );
+    };
+    const clearTransientSearchErrors = () =>
+      setMessages((current) =>
+        current.filter(
+          (item) =>
+            !(
+              item.role === "assistant" &&
+              (item.content.startsWith("检索未完成：") ||
+                item.content.startsWith("请求未完成："))
+            ),
+        ),
+      );
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const events = buffer.split("\n\n");
+      buffer = events.pop() || "";
+      for (const event of events) {
+        if (!event.startsWith("data: ")) continue;
+        const payload = JSON.parse(event.slice(6)) as {
+          type: string;
+          [key: string]: unknown;
+        };
+        if (
+          payload.type === "conversation" &&
+          typeof payload.conversationId === "string"
+        )
+          setConversationId(payload.conversationId);
+        if (
+          payload.type === "text-delta" &&
+          typeof payload.content === "string"
+        )
+          appendText(payload.content);
+        if (payload.type === "rag-sources") {
+          rag = payload.data as RagResult;
+          appendText("");
+          setMessages((current) =>
+            current.map((item) =>
+              item.id === assistantId ? { ...item, rag } : item,
+            ),
+          );
+        }
+        if (payload.type === "approval-required") {
+          clearTransientSearchErrors();
+          setApproval(payload as unknown as Approval);
+        }
+        if (payload.type === "search-results") {
+          clearTransientSearchErrors();
+          setResults((payload.data as { items?: Patent[] }).items || []);
+        }
+        if (payload.type === "error") {
+          const message =
+            typeof payload.message === "string"
+              ? payload.message
+              : "智能体执行失败";
+          setApproval(null);
+          toast.error(message);
+          setMessages((current) => [
+            ...current,
+            {
+              id: crypto.randomUUID(),
+              role: "assistant",
+              content: `请求未完成：${message}`,
+              timestamp: new Date(),
+            },
+          ]);
         }
       }
+    }
+    await loadConversations();
+  };
+
+  const handleSend = async (content: string) => {
+    if (isLoading || approval) return;
+    setIsLoading(true);
+    setResults([]);
+    setExpandedPatentIds(new Set());
+    setMessages((current) => [
+      ...current,
+      {
+        id: crypto.randomUUID(),
+        role: "user",
+        content,
+        timestamp: new Date(),
+        tool: mode === "search" ? "专利检索" : undefined,
+      },
+    ]);
+    try {
+      const response = await fetch("/api/agent/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationId: conversationId || undefined,
+          message: content,
+          mode,
+        }),
+      });
+      if (!response.ok)
+        throw new Error((await response.json()).error || "请求失败");
+      await consumeStream(response);
     } catch (error) {
-      console.error("对话出错:", error);
-      toast.error("发生错误，请稍后重试");
+      toast.error(
+        error instanceof Error ? error.message : "发送失败，请稍后重试",
+      );
     } finally {
       setIsLoading(false);
     }
   };
 
-  const handleBackFromWorkflow = () => {
-    setShowSearchFormula(false);
-    setShowReport(false);
-    setShowDisclosure(false);
-    setShowAnalysis(false);
-    setShowKeywordSearch(false);
-    setUploadedFileName("");
-    setSearchQuery("");
+  const handleApproval = async (
+    decision: "approve" | "edit-and-approve" | "cancel",
+  ) => {
+    if (!approval || !conversationId) return;
+    setIsLoading(true);
+    try {
+      const response = await fetch("/api/agent/approvals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          conversationId,
+          ...approval,
+          decision,
+          strategy:
+            decision === "edit-and-approve" ? approval.strategy : undefined,
+        }),
+      });
+      if (!response.ok)
+        throw new Error((await response.json()).error || "确认失败");
+      setApproval(null);
+      setEditingStrategy(false);
+      await consumeStream(response);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "确认失败");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleNewChat = () => {
+    setConversationId(null);
     setMessages([]);
-    handleBackFromWorkflow();
-    setUploadedFileNames([]);
-    toast.success("对话已重置");
+    setResults([]);
+    setApproval(null);
+    setEditingStrategy(false);
+  };
+  const handleSelectConversation = async (id: string) => {
+    try {
+      const response = await fetch(`/api/agent/conversations/${id}`);
+      if (!response.ok) throw new Error("读取对话失败");
+      const data = (await response.json()) as {
+        conversation: SidebarConversation;
+        messages: StoredMessage[];
+        ragSources?: Record<string, RagResult>;
+        searchResults?: { items?: Patent[] };
+      };
+      setConversationId(id);
+      setApproval(
+        (data.conversation.pendingApproval as Approval | null) || null,
+      );
+      setEditingStrategy(false);
+      setResults(
+        data.conversation.type === "search"
+          ? data.searchResults?.items || []
+          : [],
+      );
+      setMessages(
+        data.messages
+          .filter((item) => item.role === "user" || item.role === "assistant")
+          .map((item, index) => ({
+            id: item.id || `${id}-${index}`,
+            role: item.role as "user" | "assistant",
+            content: extractHistoryText(item.content),
+            timestamp: new Date(item.createdAt || Date.now()),
+            rag: item.id ? data.ragSources?.[item.id] : undefined,
+          }))
+          .filter((item) => item.content),
+      );
+    } catch {
+      toast.error("无法打开该对话");
+    }
   };
 
-  // 如果正在进行专利检索式工作流，显示专用页面
-  if (showSearchFormula) {
-    return (
-      <div className="flex h-screen bg-background">
-        <ChatSidebar />
-        <div className="flex flex-1 flex-col">
-          <SearchFormulaWorkflow
-            fileName={uploadedFileName}
-            onBack={handleBackFromWorkflow}
-          />
-        </div>
-      </div>
-    );
-  }
-
-  // 如果正在进行专利检索报告工作流，显示专用页面
-  if (showReport) {
-    return (
-      <div className="flex h-screen bg-background">
-        <ChatSidebar />
-        <div className="flex flex-1 flex-col">
-          <ReportWorkflow
-            fileName={uploadedFileName}
-            onBack={handleBackFromWorkflow}
-          />
-        </div>
-      </div>
-    );
-  }
-
-  // 如果正在进行专利交底书工作流，显示专用页面
-  if (showDisclosure) {
-    return (
-      <div className="flex h-screen bg-background">
-        <ChatSidebar />
-        <div className="flex flex-1 flex-col">
-          <DisclosureWorkflow
-            fileName={uploadedFileName}
-            onBack={handleBackFromWorkflow}
-          />
-        </div>
-      </div>
-    );
-  }
-
-  // 如果正在进行专利解析工作流，显示专用页面
-  if (showAnalysis) {
-    return (
-      <div className="flex h-screen bg-background">
-        <ChatSidebar />
-        <div className="flex flex-1 flex-col">
-          <AnalysisWorkflow
-            fileNames={uploadedFileNames}
-            onBack={handleBackFromWorkflow}
-          />
-        </div>
-      </div>
-    );
-  }
-
-  // 如果正在进行关键词搜索工作流，显示专用页面
-  if (showKeywordSearch) {
-    return (
-      <div className="flex h-screen bg-background">
-        <ChatSidebar />
-        <div className="flex flex-1 flex-col">
-          <KeywordSearchWorkflow
-            initialQuery={searchQuery}
-            onBack={handleBackFromWorkflow}
-          />
-        </div>
-      </div>
-    );
-  }
-
   return (
-    <div className="flex h-screen bg-background">
-      {/* Sidebar */}
-      <ChatSidebar onNewChat={handleNewChat} />
-
-      {/* Main Content */}
-      <div className="flex flex-1 flex-col">
-        {/* Header */}
-        <header className="flex h-14 items-center justify-end border-b border-border bg-card px-4"></header>
-
-        {/* Chat Area */}
-        <main className="flex flex-1 flex-col overflow-hidden">
-          <div className="flex-1 overflow-y-auto" ref={scrollAreaRef}>
-            {messages.length === 0 ? (
-              /* Welcome Message */
-              <div className="flex h-full flex-col items-center justify-center text-center px-4">
-                <div className="mb-6 flex h-16 w-16 items-center justify-center rounded-2xl bg-primary/10">
-                  <svg
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    className="h-8 w-8 text-primary"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                  >
-                    <path d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25" />
-                  </svg>
+    <div className="flex h-dvh min-h-0 overflow-hidden bg-background">
+      <ChatSidebar
+        conversations={conversations}
+        activeConversationId={conversationId}
+        onNewChat={handleNewChat}
+        onSelectConversation={handleSelectConversation}
+        mode={mode}
+      />
+      <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
+        <header className="flex h-14 shrink-0 items-center border-b border-border bg-card px-5 text-sm text-muted-foreground">
+          {mode === "qa" ? "通用问答" : "专利检索"} · 历史记录保存 30 天
+        </header>
+        <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div className="relative h-0 min-h-0 flex-1 overflow-hidden">
+            <div
+              className="h-full overflow-y-auto overscroll-contain custom-scrollbar"
+              ref={scrollAreaRef}
+            >
+              {messages.length === 0 ? (
+                <div className="flex h-full flex-col items-center justify-center px-4 text-center">
+                  <h1 className="mb-2 text-3xl font-semibold">
+                    {mode === "qa" ? "通用专利问答" : "本地专利检索"}
+                  </h1>
+                  <p className="max-w-lg text-muted-foreground">
+                    {mode === "qa"
+                      ? "基于知识库资料回答专利相关问题。"
+                      : "生成检索策略后，等待您的确认再查询专利库。"}
+                  </p>
+                  <div className="mt-8 w-full max-w-3xl">
+                    <ChatInput
+                      onSend={handleSend}
+                      mode={mode}
+                      disabled={isLoading || Boolean(approval)}
+                    />
+                  </div>
                 </div>
-                <h1 className="text-3xl font-semibold text-foreground mb-2 text-balance">
-                  你好，我是专利智能助手
-                </h1>
-                <p className="text-muted-foreground max-w-md text-balance">
-                  我可以帮助您进行专利检索、撰写交底书、生成检索报告以及深度解析专利文献
-                </p>
-              </div>
-            ) : (
-              /* Chat Messages */
-              <div className="flex flex-col">
-                {messages.map((message) => (
-                  <ChatMessage key={message.id} message={message} />
-                ))}
-                {isLoading &&
-                  messages[messages.length - 1]?.role === "user" && (
-                    <div className="flex w-full gap-4 px-4 py-6 bg-muted/30">
-                      <div className="flex w-full max-w-3xl mx-auto gap-4">
-                        <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg bg-primary text-primary-foreground">
-                          <Loader2 className="h-4 w-4 animate-spin" />
-                        </div>
-                        <div className="flex-1 space-y-2">
-                          <div className="flex items-center gap-2">
-                            <span className="text-sm font-medium text-foreground">
-                              专利智能助手
-                            </span>
-                          </div>
-                          <div className="text-sm text-muted-foreground">
-                            正在思考...
-                          </div>
-                        </div>
-                      </div>
+              ) : (
+                <div>
+                  {messages.map((message) => (
+                    <div
+                      key={message.id}
+                      ref={(element) => setMessageRef(message.id, element)}
+                    >
+                      <ChatMessage message={message} />
                     </div>
-                  )}
-              </div>
+                  ))}
+                </div>
+              )}
+              {mode === "search" && approval && (
+                <section className="mx-auto mb-6 max-w-3xl rounded-xl border border-primary/30 bg-primary/5 p-5">
+                  <h2 className="font-semibold">请确认检索策略</h2>
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    {approval.strategy.explanation || approval.strategy.topic}
+                  </p>
+                  <div className="mt-3 grid gap-2 text-sm">
+                    <label className="grid gap-1">
+                      <span className="font-medium">关键词：</span>
+                      {editingStrategy ? (
+                        <input
+                          value={approval.strategy.keywords.join("、")}
+                          onChange={(event) =>
+                            setApproval((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    strategy: {
+                                      ...current.strategy,
+                                      keywords: event.target.value
+                                        .split(/[、,，]/)
+                                        .map((item) => item.trim())
+                                        .filter(Boolean),
+                                    },
+                                  }
+                                : current,
+                            )
+                          }
+                          className="rounded border bg-background px-2 py-1"
+                        />
+                      ) : (
+                        <span>{approval.strategy.keywords.join("、")}</span>
+                      )}
+                    </label>
+                    <label className="grid gap-1">
+                      <span className="font-medium">IPC：</span>
+                      {editingStrategy ? (
+                        <input
+                          value={approval.strategy.ipcCodes.join("、")}
+                          onChange={(event) =>
+                            setApproval((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    strategy: {
+                                      ...current.strategy,
+                                      ipcCodes: event.target.value
+                                        .split(/[、,，]/)
+                                        .map((item) =>
+                                          item.trim().toUpperCase(),
+                                        )
+                                        .filter(Boolean),
+                                    },
+                                  }
+                                : current,
+                            )
+                          }
+                          placeholder="例如 G06F、H01M"
+                          className="rounded border bg-background px-2 py-1"
+                        />
+                      ) : (
+                        <span>
+                          {approval.strategy.ipcCodes.length
+                            ? approval.strategy.ipcCodes.join("、")
+                            : "不限"}
+                        </span>
+                      )}
+                    </label>
+                    <label className="grid gap-1">
+                      <span className="font-medium">结果数量：</span>
+                      {editingStrategy ? (
+                        <input
+                          type="number"
+                          min="1"
+                          max="50"
+                          value={approval.strategy.limit}
+                          onChange={(event) =>
+                            setApproval((current) =>
+                              current
+                                ? {
+                                    ...current,
+                                    strategy: {
+                                      ...current.strategy,
+                                      limit: Math.max(
+                                        1,
+                                        Math.min(
+                                          50,
+                                          Number(event.target.value) || 1,
+                                        ),
+                                      ),
+                                    },
+                                  }
+                                : current,
+                            )
+                          }
+                          className="w-24 rounded border bg-background px-2 py-1"
+                        />
+                      ) : (
+                        <span>{approval.strategy.limit} 条</span>
+                      )}
+                    </label>
+                    <details className="text-muted-foreground">
+                      <summary className="cursor-pointer">高级条件</summary>
+                      <p>
+                        申请人：{(approval.strategy as any).applicant || "不限"}
+                        ；公开日期：
+                        {(approval.strategy as any).dateFrom || "不限"} 至{" "}
+                        {(approval.strategy as any).dateTo || "不限"}；类型：
+                        {(approval.strategy as any).kind || "不限"}；排序：
+                        {(approval.strategy as any).sortBy || "最新公开"}
+                      </p>
+                    </details>
+                  </div>
+                  <div className="mt-4 flex gap-2">
+                    {editingStrategy ? (
+                      <Button
+                        onClick={() => handleApproval("edit-and-approve")}
+                        disabled={
+                          isLoading || approval.strategy.keywords.length === 0
+                        }
+                      >
+                        保存并检索
+                      </Button>
+                    ) : (
+                      <>
+                        <Button
+                          onClick={() => handleApproval("approve")}
+                          disabled={isLoading}
+                        >
+                          确认并检索
+                        </Button>
+                        <Button
+                          variant="outline"
+                          onClick={() => setEditingStrategy(true)}
+                          disabled={isLoading}
+                        >
+                          修改
+                        </Button>
+                      </>
+                    )}
+                    <Button
+                      variant="outline"
+                      onClick={() => handleApproval("cancel")}
+                      disabled={isLoading}
+                    >
+                      取消
+                    </Button>
+                  </div>
+                </section>
+              )}
+              {mode === "search" && results.length > 0 && (
+                <section className="mx-auto mb-6 max-w-3xl space-y-4 px-4">
+                  <h2 className="font-semibold">本地专利库检索结果</h2>
+                  {results.map((item) => {
+                    const expanded = expandedPatentIds.has(item.id);
+                    const abstract = item.abstract || "暂无摘要";
+                    const shouldCollapse = abstract.length > 180;
+                    return (
+                      <article
+                        key={item.id}
+                        className="rounded-2xl border border-sky-200 bg-card p-5 shadow-sm"
+                      >
+                        <div className="flex items-start justify-between gap-4">
+                          <a
+                            href={`/patents/${item.id}`}
+                            className="min-w-0 hover:text-primary"
+                          >
+                            <div className="flex flex-wrap items-center gap-2 text-sm">
+                              <span className="font-semibold text-sky-600">
+                                {item.docNumber || "公开号未知"}
+                              </span>
+                              {item.kind && (
+                                <span className="rounded-md bg-blue-100 px-2 py-0.5 font-medium text-blue-700">
+                                  {item.kind}
+                                </span>
+                              )}
+                              <span className="text-muted-foreground">
+                                {item.pubDate || "日期未知"}
+                              </span>
+                            </div>
+                            <h3 className="mt-2 text-lg font-semibold leading-7">
+                              {item.title || "未命名专利"}
+                            </h3>
+                          </a>
+                          <a
+                            href={`/patents/${item.id}`}
+                            className="shrink-0 rounded-md border px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/5"
+                          >
+                            专利解析
+                          </a>
+                          {shouldCollapse && (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                setExpandedPatentIds((current) => {
+                                  const next = new Set(current);
+                                  if (next.has(item.id)) next.delete(item.id);
+                                  else next.add(item.id);
+                                  return next;
+                                })
+                              }
+                              className="flex shrink-0 items-center gap-1 text-sm font-medium hover:text-primary"
+                            >
+                              {expanded ? "收起" : "展开"}
+                              {expanded ? (
+                                <ChevronUp className="h-4 w-4" />
+                              ) : (
+                                <ChevronDown className="h-4 w-4" />
+                              )}
+                            </button>
+                          )}
+                        </div>
+                        <p className="mt-3 text-sm text-muted-foreground">
+                          申请人：{item.applicant || "未知"}
+                        </p>
+                        {item.ipcCodes?.length ? (
+                          <div className="mt-3 flex flex-wrap gap-2">
+                            {item.ipcCodes.map((ipc) => (
+                              <span
+                                key={ipc}
+                                className="rounded-full border border-sky-200 bg-sky-50 px-3 py-1 font-mono text-xs text-slate-700"
+                              >
+                                {ipc}
+                              </span>
+                            ))}
+                          </div>
+                        ) : null}
+                        <p className="mt-4 border-t pt-4 text-sm leading-6 text-muted-foreground">
+                          {expanded || !shouldCollapse
+                            ? abstract
+                            : `${abstract.slice(0, 180)}…`}
+                        </p>
+                      </article>
+                    );
+                  })}
+                </section>
+              )}
+              {isLoading && (
+                <div className="mx-auto flex max-w-3xl items-center gap-2 px-4 pb-4 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  智能体正在处理…
+                </div>
+              )}
+            </div>
+            {messageStops.length > 1 && (
+              <nav
+                aria-label="对话内容定位"
+                className="pointer-events-none absolute inset-y-6 right-2 z-10 hidden w-5 flex-col items-center justify-center gap-1.5 md:flex"
+              >
+                {messageStops.map((stop, index) => (
+                  <button
+                    key={stop.id}
+                    type="button"
+                    title={`定位到第 ${index + 1} 条：${stop.label || "消息"}`}
+                    aria-label={`定位到第 ${index + 1} 条消息`}
+                    onClick={() => scrollToMessage(stop.id)}
+                    className={`pointer-events-auto h-0.5 w-3 shrink-0 rounded-full transition-colors ${
+                      activeMessageId === stop.id
+                        ? "bg-primary"
+                        : "bg-muted-foreground/30 hover:bg-muted-foreground/65"
+                    }`}
+                  />
+                ))}
+              </nav>
             )}
           </div>
-
-          {/* Chat Input - Fixed at bottom */}
-          <div className="bg-background">
-            <ChatInput onSend={handleSendMessage} />
-          </div>
+          {messages.length > 0 && (
+            <div className="shrink-0 border-t bg-background">
+              <ChatInput
+                onSend={handleSend}
+                mode={mode}
+                disabled={isLoading || Boolean(approval)}
+              />
+            </div>
+          )}
         </main>
-
-        {/* Footer */}
-        <footer className="flex items-center justify-center py-3 text-xs text-muted-foreground">
-          <span>专利智能助手由AI技术驱动，生成内容供参考</span>
-        </footer>
       </div>
     </div>
   );
+}
+
+export default function Home() {
+  return <AssistantWorkspace mode="qa" />;
 }
