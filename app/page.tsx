@@ -345,6 +345,22 @@ export function AssistantWorkspace({ mode }: { mode: "qa" | "search" }) {
     setApproval(null);
     setEditingStrategy(false);
   };
+
+  const handleDeleteConversation = async (id: string) => {
+    try {
+      const response = await fetch(`/api/agent/conversations/${id}`, {
+        method: "DELETE",
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "删除对话失败");
+      if (id === conversationId) handleNewChat();
+      await loadConversations();
+      toast.success("已删除历史对话");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "删除对话失败");
+    }
+  };
+
   const handleSelectConversation = async (id: string) => {
     try {
       const response = await fetch(`/api/agent/conversations/${id}`);
@@ -389,6 +405,7 @@ export function AssistantWorkspace({ mode }: { mode: "qa" | "search" }) {
         activeConversationId={conversationId}
         onNewChat={handleNewChat}
         onSelectConversation={handleSelectConversation}
+        onDeleteConversation={handleDeleteConversation}
         mode={mode}
       />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">

@@ -21,6 +21,11 @@ const requestSchema = z.object({
 export async function POST(request: Request) {
   try {
     const input = requestSchema.parse(await request.json());
+    if (input.mode === "report")
+      return NextResponse.json(
+        { error: "专利检索报告请通过 /api/agent/reports 上传交底书启动。" },
+        { status: 400 },
+      );
     const resourceId = await getAnonymousResourceId();
     let conversation = input.conversationId
       ? await getConversation(resourceId, input.conversationId)

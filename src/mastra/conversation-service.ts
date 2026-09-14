@@ -28,7 +28,7 @@ async function ensureTables() {
         CREATE TABLE IF NOT EXISTS mastra_agent.agent_conversations (
           id UUID PRIMARY KEY,
           resource_id TEXT NOT NULL,
-          type TEXT NOT NULL CHECK (type IN ('qa', 'search')),
+          type TEXT NOT NULL CHECK (type IN ('qa', 'search', 'report')),
           title TEXT NOT NULL,
           status TEXT NOT NULL DEFAULT 'active',
           active_run_id TEXT,
@@ -42,6 +42,11 @@ async function ensureTables() {
         CREATE INDEX IF NOT EXISTS agent_conversations_resource_updated_idx
           ON mastra_agent.agent_conversations(resource_id, updated_at DESC);
         ALTER TABLE mastra_agent.agent_conversations ADD COLUMN IF NOT EXISTS search_results JSONB;
+        ALTER TABLE mastra_agent.agent_conversations
+          DROP CONSTRAINT IF EXISTS agent_conversations_type_check;
+        ALTER TABLE mastra_agent.agent_conversations
+          ADD CONSTRAINT agent_conversations_type_check
+          CHECK (type IN ('qa', 'search', 'report'));
         CREATE TABLE IF NOT EXISTS mastra_agent.qa_message_sources (
           conversation_id UUID NOT NULL REFERENCES mastra_agent.agent_conversations(id) ON DELETE CASCADE,
           message_id TEXT NOT NULL,

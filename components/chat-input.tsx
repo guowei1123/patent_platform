@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { MessageCircleQuestion, Search, Send } from "lucide-react";
+import { FileText, MessageCircleQuestion, Search, Send } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -64,6 +64,13 @@ export function ChatInput({
             >
               <Search className="h-4 w-4" />
               专利检索
+            </Link>
+            <Link
+              href="/report"
+              className="flex items-center gap-1 rounded px-2 py-1.5 hover:bg-muted"
+            >
+              <FileText className="h-4 w-4" />
+              专利检索报告
             </Link>
           </div>
           <Button

@@ -18,12 +18,22 @@ export interface PatentSearchResponse {
   items: PatentSearchResult[];
 }
 
+export interface PatentComparisonMaterial {
+  id: string;
+  claims: string;
+  description: string;
+  drawings: string;
+  availableSections: Array<"claims" | "description" | "drawings">;
+}
+
 export type PatentSortBy = "pub_date_desc" | "pub_date_asc" | "relevance";
 
 export interface PatentSearchParams {
   id?: string;
   /** 关键词列表(命中标题或摘要任一即可) */
   keywords?: string[];
+  /** 多关键词命中方式；检索计划中的技术关系路由使用 all。 */
+  keywordMatch?: "any" | "all";
   /** IPC 分类号前缀(如 G06F 匹配所有子类) */
   ipcCodes?: string[];
   /** 申请人模糊匹配 */
@@ -58,6 +68,128 @@ function getPool(): Pool {
   return pool;
 }
 
+const contentColumnCandidates = {
+  claims: ["claims", "claim_text", "claims_text", "claim_content", "claim"],
+  description: [
+    "description",
+    "description_text",
+    "specification",
+    "specification_text",
+    "full_text",
+    "content",
+  ],
+  drawings: [
+    "drawings",
+    "drawings_text",
+    "drawing_description",
+    "figures",
+    "figure_description",
+  ],
+} as const;
+
+type ComparisonSection = keyof typeof contentColumnCandidates;
+
+function quoteIdentifier(identifier: string) {
+  return `"${identifier.replace(/"/g, '""')}"`;
+}
+
+/** 仅接受数据库实际存在的白名单字段，避免将配置值拼入 SQL。 */
+export function resolvePatentTextColumns(
+  availableColumns: string[],
+  configuredColumns: Partial<Record<ComparisonSection, string>> = {},
+) {
+  const available = new Set(availableColumns);
+  return Object.fromEntries(
+    (Object.keys(contentColumnCandidates) as ComparisonSection[]).flatMap(
+      (section) => {
+        const configured = configuredColumns[section];
+        const column =
+          configured && available.has(configured)
+            ? configured
+            : contentColumnCandidates[section].find((item) =>
+                available.has(item),
+              );
+        return column ? [[section, column]] : [];
+      },
+    ),
+  ) as Partial<Record<ComparisonSection, string>>;
+}
+
+/**
+ * 读取检索报告深度比对所需的权利要求、说明书和附图说明。
+ * 当前支持正文存储在 cnipa.patent 的 ETL；字段名会自动识别，也可通过
+ * CNIPA_PATENT_CLAIMS_COLUMN、CNIPA_PATENT_DESCRIPTION_COLUMN、
+ * CNIPA_PATENT_DRAWINGS_COLUMN 显式指定。
+ */
+export async function getPatentComparisonMaterials(
+  patentIds: string[],
+): Promise<Map<string, PatentComparisonMaterial>> {
+  const ids = [...new Set(patentIds.filter(Boolean))];
+  const result = new Map<string, PatentComparisonMaterial>();
+  if (!ids.length) return result;
+  const client = await getPool().connect();
+  try {
+    const columnsResult = await client.query<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns
+       WHERE table_schema = 'cnipa' AND table_name = 'patent'`,
+    );
+    const columns = resolvePatentTextColumns(
+      columnsResult.rows.map((row) => row.column_name),
+      {
+        claims: process.env.CNIPA_PATENT_CLAIMS_COLUMN,
+        description: process.env.CNIPA_PATENT_DESCRIPTION_COLUMN,
+        drawings: process.env.CNIPA_PATENT_DRAWINGS_COLUMN,
+      },
+    );
+    const selected = (Object.keys(columns) as ComparisonSection[]).map(
+      (section) =>
+        `COALESCE(p.${quoteIdentifier(columns[section]!)}::text, '') AS ${quoteIdentifier(section)}`,
+    );
+    if (!selected.length) {
+      for (const id of ids) {
+        result.set(id, {
+          id,
+          claims: "",
+          description: "",
+          drawings: "",
+          availableSections: [],
+        });
+      }
+      return result;
+    }
+    const rows = await client.query<Record<string, unknown>>(
+      `SELECT p.id, ${selected.join(", ")} FROM cnipa.patent p WHERE p.id::text = ANY($1::text[])`,
+      [ids],
+    );
+    for (const row of rows.rows) {
+      const availableSections = (
+        Object.keys(columns) as ComparisonSection[]
+      ).filter((section) => String(row[section] || "").trim());
+      result.set(String(row.id), {
+        id: String(row.id),
+        claims: String(row.claims || "").trim(),
+        description: String(row.description || "").trim(),
+        drawings: String(row.drawings || "").trim(),
+        availableSections,
+      });
+    }
+    for (const id of ids) {
+      if (!result.has(id)) {
+        result.set(id, {
+          id,
+          claims: "",
+          description: "",
+          drawings: "",
+          availableSections: [],
+        });
+      }
+    }
+    return result;
+  } finally {
+    client.release();
+  }
+}
+
 function normalize(input?: string | string[]): string[] {
   if (!input) return [];
   const arr = Array.isArray(input) ? input : [input];
@@ -67,12 +199,28 @@ function normalize(input?: string | string[]): string[] {
     .filter(Boolean);
 }
 
+/**
+ * CNIPA ETL 中的 IPC 可能包含不定数量空格和版本号，
+ * 例如 `G06N    3/08    (2023.01)`。查询条件统一使用无空格、无版本号的前缀。
+ */
+export function normalizeIpcCodes(input?: string | string[]): string[] {
+  return [
+    ...new Set(
+      normalize(input)
+        .map((code) => code.replace(/\s+/g, ""))
+        .map((code) => code.replace(/\(\d{4}\.\d{2}\)$/i, ""))
+        .filter(Boolean),
+    ),
+  ];
+}
+
 export async function searchPatents(
   params: PatentSearchParams,
 ): Promise<PatentSearchResponse> {
   const {
     id,
     keywords = [],
+    keywordMatch = "any",
     ipcCodes = [],
     applicant,
     dateFrom,
@@ -84,7 +232,7 @@ export async function searchPatents(
   } = params;
 
   const kw = normalize(keywords);
-  const ipc = normalize(ipcCodes);
+  const ipc = normalizeIpcCodes(ipcCodes);
 
   // 至少要有一个过滤条件,避免全表扫描
   if (
@@ -110,20 +258,31 @@ export async function searchPatents(
       paramIdx++;
     }
 
-    // 关键词命中标题或摘要(任一命中即可)
+    // 关键词命中标题或摘要；技术关系检索可要求全部关键词共同出现。
     if (kw.length) {
-      paramsArr.push(kw.map((k) => `%${k}%`));
-      conditions.push(
-        `(p.title ILIKE ANY($${paramIdx}) OR p.abstract ILIKE ANY($${paramIdx}))`,
-      );
-      paramIdx++;
+      if (keywordMatch === "all") {
+        for (const keyword of kw) {
+          paramsArr.push(`%${keyword}%`);
+          conditions.push(
+            `(p.title ILIKE $${paramIdx} OR p.abstract ILIKE $${paramIdx})`,
+          );
+          paramIdx++;
+        }
+      } else {
+        paramsArr.push(kw.map((k) => `%${k}%`));
+        conditions.push(
+          `(p.title ILIKE ANY($${paramIdx}) OR p.abstract ILIKE ANY($${paramIdx}))`,
+        );
+        paramIdx++;
+      }
     }
 
-    // IPC 分类号前缀匹配(如 G06F 匹配 G06F 开头的所有子类)
+    // IPC 分类号前缀匹配。ETL 原始值可能含不定空格和版本号，
+    // 因此数据库侧也移除空格后再比较。
     if (ipc.length) {
       paramsArr.push(ipc.map((c) => `${c}%`));
       conditions.push(
-        `EXISTS (SELECT 1 FROM cnipa.patent_ipc pi WHERE pi.patent_id = p.id AND pi.ipc_code ILIKE ANY($${paramIdx}))`,
+        `EXISTS (SELECT 1 FROM cnipa.patent_ipc pi WHERE pi.patent_id = p.id AND regexp_replace(pi.ipc_code, '[[:space:]]+', '', 'g') ILIKE ANY($${paramIdx}))`,
       );
       paramIdx++;
     }
