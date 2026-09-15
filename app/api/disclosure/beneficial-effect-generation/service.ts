@@ -14,9 +14,9 @@ const BENEFICIAL_EFFECTS_TEMPLATE_STRING = `你是一位专业的专利代理师
 
 撰写要求：
 1. **效果分析**：基于技术方案的核心创新点，分析其带来的具体技术效果。
-2. **量化对比**：尽可能与现有技术进行对比，说明本发明在性能、效率、成本、用户体验等方面的提升。
+2. **量化对比**：只有用户明确提供测量结果及条件时才引用量化数据；没有依据时只作定性说明，不能把目标值写成实测结果。
 3. **多维度阐述**：从技术性能、实施成本、用户体验、可扩展性等多个角度阐述有益效果。
-4. **具体明确**：避免空泛的描述，如"效果好"、"效率高"，应具体说明"识别准确率提升30%"、"处理时间缩短50%"等。
+4. **具体明确**：说明技术手段及其产生效果的机制；不得编造百分比、实验数据、性能提升或对比结果。
 5. **语言风格**：使用专业、客观的专利法律和技术术语。
 6. **格式**：分段撰写，逻辑清晰。300-500字。
 
@@ -60,3 +60,22 @@ export async function streamBeneficialEffects(params: {
     throw new Error("有益效果生成失败");
   }
 }
+
+/** 供交底书工作流复用的非流式入口。 */
+export async function generateBeneficialEffects(params: {
+  technicalBackground: string;
+  technicalSolution: string;
+}): Promise<string> {
+  try {
+    return String(
+      await beneficialEffectsChain.invoke(params, {
+        callbacks: [langfuseHandler],
+      }),
+    ).trim();
+  } catch (error) {
+    console.error("有益效果生成时发生错误:", error);
+    throw new Error("有益效果生成失败");
+  }
+}
+
+export { beneficialEffectsChain };

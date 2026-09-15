@@ -28,7 +28,7 @@ async function ensureTables() {
         CREATE TABLE IF NOT EXISTS mastra_agent.agent_conversations (
           id UUID PRIMARY KEY,
           resource_id TEXT NOT NULL,
-          type TEXT NOT NULL CHECK (type IN ('qa', 'search', 'report')),
+          type TEXT NOT NULL CHECK (type IN ('qa', 'search', 'report', 'disclosure')),
           title TEXT NOT NULL,
           status TEXT NOT NULL DEFAULT 'active',
           active_run_id TEXT,
@@ -46,7 +46,7 @@ async function ensureTables() {
           DROP CONSTRAINT IF EXISTS agent_conversations_type_check;
         ALTER TABLE mastra_agent.agent_conversations
           ADD CONSTRAINT agent_conversations_type_check
-          CHECK (type IN ('qa', 'search', 'report'));
+          CHECK (type IN ('qa', 'search', 'report', 'disclosure'));
         CREATE TABLE IF NOT EXISTS mastra_agent.qa_message_sources (
           conversation_id UUID NOT NULL REFERENCES mastra_agent.agent_conversations(id) ON DELETE CASCADE,
           message_id TEXT NOT NULL,

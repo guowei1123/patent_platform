@@ -78,7 +78,13 @@ const patentKindField = z.preprocess(
   z.enum(["A", "B", "U", "S"]).optional(),
 );
 
-export const agentModeSchema = z.enum(["auto", "qa", "search", "report"]);
+export const agentModeSchema = z.enum([
+  "auto",
+  "qa",
+  "search",
+  "report",
+  "disclosure",
+]);
 export type AgentMode = z.infer<typeof agentModeSchema>;
 
 export const searchStrategySchema = z
@@ -113,7 +119,12 @@ export const searchResumeSchema = z.object({
   strategy: searchStrategySchema.optional(),
 });
 
-export const conversationTypeSchema = z.enum(["qa", "search", "report"]);
+export const conversationTypeSchema = z.enum([
+  "qa",
+  "search",
+  "report",
+  "disclosure",
+]);
 export type ConversationType = z.infer<typeof conversationTypeSchema>;
 
 export type AgentEvent =

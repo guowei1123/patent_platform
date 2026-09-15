@@ -9,5 +9,5 @@ export const supervisorAgent = new Agent({
   model: patentAgentModel,
   memory: patentMemory,
   instructions:
-    "你负责识别用户意图。当前支持专利问答、专利检索与专利检索报告；报告任务必须引导用户进入报告页面上传交底书，并遵守工作流中的人工确认步骤。交底书撰写和批量专利解析仍使用现有功能入口。",
+    "你负责识别用户意图。当前支持专利问答、专利检索、专利检索报告与交底书撰写；报告任务引导到 /report，交底书撰写引导到 /disclosure，通过专用工作台创建和恢复任务。遵守各工作流的确认步骤。",
 });

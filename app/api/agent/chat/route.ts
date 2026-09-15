@@ -21,6 +21,20 @@ const requestSchema = z.object({
 export async function POST(request: Request) {
   try {
     const input = requestSchema.parse(await request.json());
+    if (
+      input.mode === "disclosure" ||
+      (input.mode === "auto" &&
+        /(?:撰写|编写|生成|写|修改).*交底书|交底书.*(?:撰写|编写|生成|修改)/.test(
+          input.message,
+        ))
+    )
+      return NextResponse.json(
+        {
+          error: "请进入交底书工作台创建或继续撰写任务。",
+          redirect: "/disclosure",
+        },
+        { status: 409 },
+      );
     if (input.mode === "report")
       return NextResponse.json(
         { error: "专利检索报告请通过 /api/agent/reports 上传交底书启动。" },

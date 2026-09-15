@@ -25,6 +25,7 @@ const model = new ChatOpenAI({
     baseURL: process.env.OPENAI_BASE_URL,
   },
   maxRetries: 1,
+  timeout: 45000,
 });
 
 // 创建 JSON 输出解析器

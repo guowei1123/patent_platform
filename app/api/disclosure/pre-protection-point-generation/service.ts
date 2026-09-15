@@ -60,3 +60,22 @@ export async function streamProtectionPoints(params: {
     throw new Error("技术关键点和欲保护点生成失败");
   }
 }
+
+/** 供交底书工作流复用的非流式入口。 */
+export async function generateProtectionPoints(params: {
+  technicalBackground: string;
+  technicalSolution: string;
+}): Promise<string> {
+  try {
+    return String(
+      await protectionPointsChain.invoke(params, {
+        callbacks: [langfuseHandler],
+      }),
+    ).trim();
+  } catch (error) {
+    console.error("技术关键点和欲保护点生成时发生错误:", error);
+    throw new Error("技术关键点和欲保护点生成失败");
+  }
+}
+
+export { protectionPointsChain };

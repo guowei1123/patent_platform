@@ -17,7 +17,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 
 export type SidebarConversation = {
   id: string;
-  type: "qa" | "search" | "report";
+  type: "qa" | "search" | "report" | "disclosure";
   title: string;
   status: string;
   updatedAt: string;
@@ -37,7 +37,7 @@ export function ChatSidebar({
   onNewChat: () => void;
   onSelectConversation: (id: string) => void;
   onDeleteConversation?: (id: string) => void;
-  mode: "qa" | "search" | "report";
+  mode: "qa" | "search" | "report" | "disclosure";
 }) {
   const [collapsed, setCollapsed] = useState(false);
   const [query, setQuery] = useState("");
@@ -53,6 +53,8 @@ export function ChatSidebar({
   const counts = {
     qa: conversations.filter((item) => item.type === "qa").length,
     search: conversations.filter((item) => item.type === "search").length,
+    disclosure: conversations.filter((item) => item.type === "disclosure")
+      .length,
     report: conversations.filter((item) => item.type === "report").length,
   };
   if (collapsed)
@@ -107,7 +109,7 @@ export function ChatSidebar({
           历史记录
         </p>
         <div className="space-y-1">
-          {(["qa", "search", "report"] as const).map((folder) => (
+          {(["qa", "search", "report", "disclosure"] as const).map((folder) => (
             <div key={folder} className="mb-2">
               <Link
                 href={
@@ -115,7 +117,9 @@ export function ChatSidebar({
                     ? "/qa"
                     : folder === "search"
                       ? "/patent-search"
-                      : "/report"
+                      : folder === "report"
+                        ? "/report"
+                        : "/disclosure"
                 }
                 className={cn(
                   "flex w-full items-center gap-2 rounded-lg px-2 py-2 text-sm hover:bg-sidebar-accent",
@@ -128,7 +132,9 @@ export function ChatSidebar({
                     ? "通用对话"
                     : folder === "search"
                       ? "专利检索"
-                      : "检索报告"}
+                      : folder === "report"
+                        ? "检索报告"
+                        : "交底书撰写"}
                 </span>
                 <span className="text-muted-foreground">{counts[folder]}</span>
               </Link>
@@ -154,7 +160,9 @@ export function ChatSidebar({
                               ? "专利检索"
                               : item.type === "report"
                                 ? "检索报告"
-                                : "专利问答"}
+                                : item.type === "disclosure"
+                                  ? "交底书撰写"
+                                  : "专利问答"}
                             {item.status === "awaiting_approval"
                               ? " · 待确认"
                               : ""}

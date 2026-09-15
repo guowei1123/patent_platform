@@ -74,4 +74,22 @@ export async function streamBackground(params: {
   }
 }
 
+/** 服务端工作流使用的非流式入口，避免通过本项目 HTTP 接口绕行。 */
+export async function generateBackground(params: {
+  inventionName: string;
+  technicalField: string;
+  existingProblems: string;
+}): Promise<string> {
+  try {
+    return String(
+      await backgroundGenerationChain.invoke(params, {
+        callbacks: [langfuseHandler],
+      }),
+    ).trim();
+  } catch (error) {
+    console.error("背景技术生成时发生错误:", error);
+    throw new Error("背景技术生成失败");
+  }
+}
+
 export { backgroundGenerationChain };

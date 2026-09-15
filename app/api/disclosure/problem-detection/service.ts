@@ -92,4 +92,24 @@ export async function streamProblemDetection(params: {
   }
 }
 
+/** 供交底书工作流复用的非流式入口。 */
+export async function detectDisclosureProblems(params: {
+  technicalSolution: string;
+}): Promise<string> {
+  try {
+    return String(
+      await problemDetectionChain.invoke(
+        {
+          technicalSolution: params.technicalSolution,
+          commonProblems: COMMON_PROBLEMS,
+        },
+        { callbacks: [langfuseHandler] },
+      ),
+    ).trim();
+  } catch (error) {
+    console.error("技术方案问题检测时发生错误:", error);
+    throw new Error("技术方案问题检测失败");
+  }
+}
+
 export { problemDetectionChain };
