@@ -90,6 +90,12 @@ function toIpcList(value: unknown) {
     .slice(0, 6);
 }
 
+function detectPrimaryLanguage(text: string): "中文" | "英文" {
+  const chineseCharacters = (text.match(/[\u3400-\u9fff]/g) || []).length;
+  const latinCharacters = (text.match(/[A-Za-z]/g) || []).length;
+  return chineseCharacters >= latinCharacters ? "中文" : "英文";
+}
+
 function extractContentText(content: unknown): string {
   if (typeof content === "string") return content;
   if (Array.isArray(content)) return content.map(extractContentText).join("");
@@ -226,13 +232,17 @@ export async function parseDisclosureText(
     );
   }
 
+  const sourceLanguage = detectPrimaryLanguage(normalized);
+  const keywordLanguage = sourceLanguage;
   const prompt = `你是一名专利检索分析师。请从以下专利交底书中提取客观的技术事实，作为后续专利检索、新颖性和创造性判断的输入。
+
+交底书主语言：${sourceLanguage}。首次检索关键词必须使用${keywordLanguage}，并与交底书主语言保持一致；不要混入其他语言的词。
 
 要求：
 1. 仅基于原文，不得编造；原文未说明的字段使用空字符串或空数组。
 2. 技术特征要写成可与现有技术逐项比对的最小技术要素。
 3. 本步骤不得判断新颖性或创造性，不得输出与现有技术的相同点、区别点、技术启示、授权前景或任何法律结论。
-4. 检索关键词应覆盖核心部件、方法步骤、技术效果与同义表述；IPC 建议必须谨慎，不确定时返回空数组。
+4. searchKeywords 应覆盖核心部件、方法步骤和技术效果，并严格使用指定的关键词语言；IPC 建议必须谨慎，不确定时返回空数组。
 5. 只返回合法 JSON，字段必须为：inventionName、technicalField、backgroundTechnology、technicalProblem、technicalSolution、beneficialEffects、keyTechnicalFeatures、searchKeywords、ipcSuggestions；所有非 IPC 数组的每个元素必须为字符串，ipcSuggestions 的元素为 code 和 name。
 6. keyTechnicalFeatures 最多 12 项，searchKeywords 最多 15 项，ipcSuggestions 最多 6 项。
 
@@ -301,11 +311,8 @@ export async function extractDisclosureText(buffer: Buffer) {
   try {
     const extracted = await mammoth.extractRawText({ buffer });
     if (extracted.value.trim()) return extracted.value;
-  } catch (error) {
-    console.warn(
-      "Mammoth failed; using DOCX XML fallback:",
-      error instanceof Error ? error.message : "unknown error",
-    );
+  } catch {
+    // 部分 DOCX 在当前 Node 环境中不受 Mammoth 支持，继续使用 XML 兜底提取。
   }
   try {
     const fallbackText = extractDocxTextFallback(buffer);
@@ -323,9 +330,11 @@ export async function parseDisclosureFile(input: {
   fileName: string;
   buffer: Buffer;
 }): Promise<ParsedDisclosure> {
-  if (!input.fileName.toLowerCase().endsWith(".docx")) {
+  const isDocx = input.fileName.toLowerCase().endsWith(".docx");
+  const isTxt = input.fileName.toLowerCase().endsWith(".txt");
+  if (!isDocx && !isTxt) {
     throw new DisclosureParseInputError(
-      "目前仅支持 DOCX 格式的专利交底书",
+      "目前支持 DOCX 或 TXT 格式的专利交底书",
       400,
     );
   }
@@ -334,5 +343,8 @@ export async function parseDisclosureFile(input: {
   if (input.buffer.length > MAX_DISCLOSURE_FILE_SIZE)
     throw new DisclosureParseInputError("文件不得超过 10MB", 413);
 
-  return parseDisclosureText(await extractDisclosureText(input.buffer));
+  const text = isDocx
+    ? await extractDisclosureText(input.buffer)
+    : input.buffer.toString("utf8");
+  return parseDisclosureText(text);
 }

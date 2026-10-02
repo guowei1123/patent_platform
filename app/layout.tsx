@@ -1,17 +1,16 @@
 import React from "react";
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Geist } from "next/font/google";
 import { Analytics } from "@vercel/analytics/next";
 import { Toaster } from "@/components/ui/sonner";
 import "./globals.css";
 
 const geist = Geist({ subsets: ["latin"] });
-const geistMono = Geist_Mono({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
   title: "专利智能助手 - Patent AI Assistant",
   description:
-    "专业的专利智能对话平台，提供专利检索、交底书撰写、检索报告生成和专利解析服务",
+    "专业的专利智能对话平台，提供专利检索、交底书撰写和检索报告生成服务",
   generator: "v0.app",
   icons: {
     icon: [
@@ -39,9 +38,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN">
-      <body
-        className={`${geist.className} ${geistMono.className} font-sans antialiased`}
-      >
+      <body className={`${geist.className} font-sans antialiased`}>
         {children}
         <Toaster position="top-right" richColors closeButton duration={3000} />
         <Analytics />

@@ -30,6 +30,7 @@ interface PatentItem {
   kind: string;
   title: string;
   abstract: string;
+  appDate: string;
   pubDate: string;
   applicant: string;
   ipcCodes: string[];
@@ -404,11 +405,9 @@ export default function PatentSearchTestPage() {
                                 {patent.kind}
                               </Badge>
                             )}
-                            {patent.pubDate && (
-                              <span className="text-xs text-muted-foreground">
-                                {patent.pubDate}
-                              </span>
-                            )}
+                            <span className="text-xs text-muted-foreground">
+                              申请日：{patent.appDate || "日期未知"}
+                            </span>
                           </div>
                           <h3 className="text-sm font-semibold text-foreground leading-snug">
                             {patent.title}

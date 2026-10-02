@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { PatentItem } from "@/lib/types";
 import { Button } from "@/components/ui/button";
 
@@ -23,7 +24,7 @@ export function PatentSearchResults({ results }: PatentSearchResultsProps) {
               <div className="mb-3 flex items-center gap-4 text-sm text-muted-foreground">
                 <span>{patent.publicationNumber}</span>
                 <span>{patent.applicant}</span>
-                <span>{patent.publicationDate}</span>
+                <span>申请日：{patent.publicationDate || "日期未知"}</span>
               </div>
               <p className="text-sm text-muted-foreground line-clamp-2">
                 <span className="font-semibold">摘要：</span>
@@ -31,11 +32,16 @@ export function PatentSearchResults({ results }: PatentSearchResultsProps) {
               </p>
             </div>
             <Button
+              asChild
               variant="outline"
               size="sm"
               className="shrink-0 bg-transparent"
             >
-              专利解析
+              <Link
+                href={`/patents/${patent.id}?returnTo=patent-search-formula`}
+              >
+                查看详情
+              </Link>
             </Button>
           </div>
         </div>

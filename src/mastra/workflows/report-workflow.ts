@@ -35,7 +35,12 @@ function asRecord(value: unknown): Record<string, unknown> {
 }
 
 function normalizeRecommendations(value: unknown) {
-  const items = asRecord(value).recommendations;
+  const record = asRecord(value);
+  const items = Array.isArray(record.recommendations)
+    ? record.recommendations
+    : Object.values(record).flatMap((item) =>
+        Array.isArray(item) ? item : [],
+      );
   return Array.isArray(items)
     ? [
         ...new Set(
@@ -379,10 +384,11 @@ const selectDocumentsStep = createStep({
         title: "请选择需要进行 X/Y/A 辅助分类的候选文献",
         data: {
           ...inputData.searchResult,
-          items: (inputData.searchResult?.items || []).filter((item) =>
-            inputData.candidateScreening?.find(
-              (screening) => screening.id === item.id,
-            )?.proceed,
+          items: (inputData.searchResult?.items || []).filter(
+            (item) =>
+              inputData.candidateScreening?.find(
+                (screening) => screening.id === item.id,
+              )?.proceed,
           ),
           screening: inputData.candidateScreening || [],
           retrievalPlan: inputData.retrievalPlan,
@@ -399,10 +405,11 @@ const selectDocumentsStep = createStep({
       .parse(asRecord(resumeData.data).selectedPatentIds);
     const available = new Set(
       (inputData.searchResult?.items || [])
-        .filter((item) =>
-          inputData.candidateScreening?.find(
-            (screening) => screening.id === item.id,
-          )?.proceed,
+        .filter(
+          (item) =>
+            inputData.candidateScreening?.find(
+              (screening) => screening.id === item.id,
+            )?.proceed,
         )
         .map((item) => item.id),
     );

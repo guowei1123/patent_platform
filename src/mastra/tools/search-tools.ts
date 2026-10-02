@@ -24,7 +24,9 @@ function normalizeRecommendations(value: unknown) {
       : {};
   const items = Array.isArray(record.recommendations)
     ? record.recommendations
-    : [];
+    : Object.values(record).flatMap((value) =>
+        Array.isArray(value) ? value : [],
+      );
   return [
     ...new Set(items.map((item) => String(item).trim()).filter(Boolean)),
   ].slice(0, 15);

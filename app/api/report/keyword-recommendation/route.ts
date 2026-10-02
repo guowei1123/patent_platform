@@ -26,12 +26,14 @@ export async function POST(request: NextRequest) {
       desiredCount: count,
     });
 
+    const recommendations = Object.values(result).flat();
     return NextResponse.json({
       success: true,
       data: {
         coreKeyword,
         desiredCount: count,
-        ...result,
+        recommendations,
+        groups: result,
       },
     });
   } catch (error) {
@@ -62,12 +64,14 @@ export async function GET(request: NextRequest) {
       desiredCount,
     });
 
+    const recommendations = Object.values(result).flat();
     return NextResponse.json({
       success: true,
       data: {
         coreKeyword,
         desiredCount,
-        ...result,
+        recommendations,
+        groups: result,
       },
     });
   } catch (error) {

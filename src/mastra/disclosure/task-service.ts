@@ -84,6 +84,19 @@ export async function getDisclosureTask(resourceId: string, id: string) {
   );
   return row ? record(row) : null;
 }
+
+export async function getDisclosureTaskByConversationId(
+  resourceId: string,
+  conversationId: string,
+) {
+  await ensureTables();
+  const row = await mastraStore.db.oneOrNone<Record<string, unknown>>(
+    `SELECT * FROM mastra_agent.disclosure_tasks
+     WHERE conversation_id=$1 AND resource_id=$2 AND expires_at>NOW()`,
+    [conversationId, resourceId],
+  );
+  return row ? record(row) : null;
+}
 export async function listDisclosureTasks(resourceId: string) {
   await ensureTables();
   return mastraStore.db.any<{

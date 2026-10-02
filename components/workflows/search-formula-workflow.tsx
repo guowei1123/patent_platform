@@ -1,739 +1,812 @@
 "use client";
 
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { ChangeEvent, useEffect, useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   ArrowLeft,
   ArrowRight,
   Check,
   Copy,
   FileText,
-  Tags,
-  BookOpen,
-  Plus,
-  X,
-  Search,
   Lightbulb,
+  Loader2,
+  Plus,
+  Search,
+  Tags,
+  Upload,
+  X,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
 import { PatentSearchResults } from "@/components/patent-search-results";
-import { PatentItem } from "@/lib/types";
+import type { PatentItem } from "@/lib/types";
+import type { ParsedDisclosure } from "@/app/api/report/disclosure-parse/service";
 
-interface SearchFormulaWorkflowProps {
-  fileName: string;
-  onBack: () => void;
-}
-
-interface IPCItem {
-  code: string;
-  name: string;
-  selected?: boolean;
-}
-
-interface KeywordItem {
-  word: string;
-  selected?: boolean;
-}
-
-interface TemplateOption {
-  id: string;
-  name: string;
-  description: string;
-  example: string;
-}
-
-// 模拟数据
-const mockIPCList: IPCItem[] = [
-  { code: "G06F", name: "电数字数据处理", selected: true },
-  { code: "G06N", name: "基于特定计算模型的计算机系统", selected: true },
-  {
-    code: "G06Q",
-    name: "专门适用于行政、商业、金融、管理、监督或预测目的的数据处理系统或方法",
-    selected: true,
-  },
-];
-
-const mockKeywords: KeywordItem[] = [
-  { word: "人工智能", selected: true },
-  { word: "机器学习", selected: true },
-  { word: "深度学习", selected: true },
-  { word: "神经网络", selected: true },
-  { word: "算法", selected: true },
-];
-
-// 模拟专利数据
-const mockPatents: PatentItem[] = [
-  {
-    id: "1",
-    title: "一种基于深度学习的图像识别方法",
-    applicant: "某科技公司",
-    publicationNumber: "CN112345678A",
-    publicationDate: "2023-05-15",
-    abstract:
-      "本发明公开了一种基于深度学习的图像识别方法，包括：获取待识别图像；对所述待识别图像进行预处理；将预处理后的图像输入预先训练好的深度神经网络模型中，得到识别结果。本发明通过深度学习技术，提高了图像识别的准确率和效率。",
-  },
-  {
-    id: "2",
-    title: "机器学习模型训练系统及方法",
-    applicant: "某研究院",
-    publicationNumber: "CN112345679A",
-    publicationDate: "2023-04-20",
-    abstract:
-      "本发明涉及一种机器学习模型训练系统及方法，所述系统包括：数据获取模块，用于获取训练数据；模型构建模块，用于构建机器学习模型；训练模块，用于利用所述训练数据对所述机器学习模型进行训练。本发明能够提高模型训练的效率和模型的性能。",
-  },
-  {
-    id: "3",
-    title: "神经网络优化算法",
-    applicant: "某大学",
-    publicationNumber: "CN112345680A",
-    publicationDate: "2023-03-10",
-    abstract:
-      "本发明提出了一种神经网络优化算法，通过改进的梯度下降法对神经网络的权重进行更新，能够有效避免陷入局部最优解，提高神经网络的收敛速度和泛化能力。",
-  },
-];
-
-// 完整的 IPC 建议库（用于输入时推荐）
-const ipcSuggestions: IPCItem[] = [
-  { code: "G06F", name: "电数字数据处理" },
-  { code: "G06N", name: "基于特定计算模型的计算机系统" },
-  {
-    code: "G06Q",
-    name: "专门适用于行政、商业、金融、管理、监督或预测目的的数据处理系统或方法",
-  },
-  { code: "H04L", name: "数字信息的传输" },
-  { code: "G06K", name: "数据识别；数据表示；记录载体" },
-  { code: "G06T", name: "一般的图像数据处理或产生" },
-  { code: "H04N", name: "图像通信" },
-  { code: "G06V", name: "图像或视频识别或理解" },
-  { code: "H04W", name: "无线通信网络" },
-  { code: "G06F16", name: "信息检索；数据库结构" },
-  { code: "G06F21", name: "保护计算机或计算机系统免受未授权活动" },
-  {
-    code: "G06F3",
-    name: "用于将数据从特定形式转换到计算机可以处理的形式的输入装置",
-  },
-];
-
-const mockExtendedWords: KeywordItem[] = [
-  { word: "AI", selected: false },
-  { word: "ML", selected: false },
-  { word: "DL", selected: false },
-  { word: "NN", selected: false },
-  { word: "方法", selected: false },
-  { word: "数据分析", selected: false },
-  { word: "训练方法", selected: false },
-];
-
-// 扩展词建议映射（根据关键词提供建议）
-const keywordSuggestions: Record<string, string[]> = {
-  人工智能: ["AI", "智能系统", "认知计算"],
-  机器学习: ["ML", "自动学习", "统计学习"],
-  深度学习: ["DL", "神经网络", "表示学习"],
-  神经网络: ["NN", "深度网络", "卷积网络"],
-  算法: ["方法", "模型", "技术"],
-  数据处理: ["数据分析", "信息处理", "数据挖掘"],
-  模型训练: ["训练方法", "学习过程", "优化训练"],
+type Step = 1 | 2 | 3;
+type IpcItem = { code: string; name: string };
+type KeywordRelationGroup = { keywords: string[]; operator: "AND" | "OR" };
+type RelatedGroups = Record<
+  "上位概念" | "下位概念" | "同类词" | "英文同类词" | "英文简写",
+  string[]
+>;
+const SEARCH_PAGE_SIZE = 20;
+const emptyGroups: RelatedGroups = {
+  上位概念: [],
+  下位概念: [],
+  同类词: [],
+  英文同类词: [],
+  英文简写: [],
 };
-
-const templates: TemplateOption[] = [
+const templates = [
   {
     id: "ipc-keywords",
-    name: "IncoPat | IPC/CPC + Keywords",
-    description: "使用 IPC/CPC 分类号与关键词组合进行检索",
-    example:
-      "(IPC=G06F OR IPC=G06N) AND (TI=人工智能 OR AB=人工智能 OR TI=机器学习 OR AB=机器学习)",
+    name: "IPC/CPC + Keywords",
+    description: "按分类号和关键词组合缩小检索范围",
   },
   {
     id: "keywords-only",
-    name: "IncoPat | Keywords",
-    description: "仅使用关键词进行检索",
-    example:
-      "(TI=人工智能 OR AB=人工智能 OR TI=机器学习 OR AB=机器学习 OR TI=深度学习 OR AB=深度学习)",
+    name: "Keywords",
+    description: "仅按标题和摘要中的关键词检索",
   },
-];
+] as const;
+type FormulaHistorySnapshot = {
+  fileName: string;
+  ipcList: IpcItem[];
+  keywords: string[];
+  keywordGroups?: KeywordRelationGroup[];
+  selectedTemplate: (typeof templates)[number]["id"];
+  formula: string;
+  total: number;
+  offset?: number;
+  results: PatentItem[];
+  confirmed: boolean;
+};
 
+function quoteTerm(term: string) {
+  const clean = term.trim().replace(/["()]/g, "");
+  return /\s/.test(clean) ? `"${clean}"` : clean;
+}
+function buildFormula(
+  template: (typeof templates)[number]["id"],
+  keywords: string[],
+  ipcList: IpcItem[],
+  keywordGroups: KeywordRelationGroup[] = [],
+) {
+  const covered = new Set(
+    keywordGroups.flatMap((group) =>
+      group.keywords.map((word) => word.toLocaleLowerCase()),
+    ),
+  );
+  const groups = [
+    ...keywordGroups.filter((group) => group.keywords.length),
+    ...keywords
+      .filter((word) => !covered.has(word.toLocaleLowerCase()))
+      .map((word) => ({ keywords: [word], operator: "AND" as const })),
+  ];
+  const keywordPart = groups
+    .map(
+      (group) =>
+        `(${group.keywords.map((word) => `TIAB=${quoteTerm(word)}`).join(` ${group.operator} `)})`,
+    )
+    .join(" AND ");
+  if (template === "keywords-only" || ipcList.length === 0)
+    return `(${keywordPart})`;
+  const ipcPart = ipcList
+    .map((ipc) => `IPC=${quoteTerm(ipc.code.replace(/\s/g, ""))}`)
+    .join(" OR ");
+  return `(${ipcPart}) AND (${keywordPart})`;
+}
+function isFormulaHistorySnapshot(
+  value: unknown,
+): value is FormulaHistorySnapshot {
+  if (!value || typeof value !== "object") return false;
+  const snapshot = value as Record<string, unknown>;
+  return (
+    typeof snapshot.fileName === "string" &&
+    Array.isArray(snapshot.ipcList) &&
+    Array.isArray(snapshot.keywords) &&
+    (snapshot.keywordGroups === undefined ||
+      Array.isArray(snapshot.keywordGroups)) &&
+    typeof snapshot.formula === "string" &&
+    typeof snapshot.total === "number" &&
+    (snapshot.offset === undefined ||
+      (typeof snapshot.offset === "number" && snapshot.offset >= 0)) &&
+    Array.isArray(snapshot.results) &&
+    (snapshot.selectedTemplate === "ipc-keywords" ||
+      snapshot.selectedTemplate === "keywords-only") &&
+    typeof snapshot.confirmed === "boolean"
+  );
+}
 export function SearchFormulaWorkflow({
-  fileName,
+  fileName: initialFileName,
   onBack,
-}: SearchFormulaWorkflowProps) {
-  const [step, setStep] = useState<1 | 2 | 3>(1);
-  const [ipcList, setIPCList] = useState<IPCItem[]>(mockIPCList);
-  const [keywords, setKeywords] = useState<KeywordItem[]>(mockKeywords);
-  const [extendedWords, setExtendedWords] =
-    useState<KeywordItem[]>(mockExtendedWords);
-  const [selectedTemplate, setSelectedTemplate] = useState<string | null>(null);
-  const [generatedFormula, setGeneratedFormula] = useState<string>("");
-  const [isSearching, setIsSearching] = useState(false);
-  const [searchResults, setSearchResults] = useState<PatentItem[]>([]);
-  const [originalSearchResults, setOriginalSearchResults] = useState<
-    PatentItem[]
-  >([]);
-
-  // Manual input states
-  const [showIPCInput, setShowIPCInput] = useState(false);
-  const [newIPCCode, setNewIPCCode] = useState("");
-  const [newIPCName, setNewIPCName] = useState("");
-  const [showKeywordInput, setShowKeywordInput] = useState(false);
-  const [newKeyword, setNewKeyword] = useState("");
-  const [suggestedWords, setSuggestedWords] = useState<string[]>([]);
-  const [filteredIPCSuggestions, setFilteredIPCSuggestions] = useState<
-    IPCItem[]
-  >([]);
+}: {
+  fileName?: string;
+  onBack?: () => void;
+}) {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const requestedConversationId = searchParams.get("conversationId");
+  const [step, setStep] = useState<Step>(1);
+  const [fileName, setFileName] = useState(initialFileName || "尚未上传交底书");
+  const [isDisclosureParsed, setIsDisclosureParsed] = useState(false);
+  const [isParsing, setIsParsing] = useState(false);
+  const [strategyRationale, setStrategyRationale] = useState("");
+  const [ipcList, setIpcList] = useState<IpcItem[]>([]);
+  const [keywords, setKeywords] = useState<string[]>([]);
+  const [keywordGroups, setKeywordGroups] = useState<KeywordRelationGroup[]>(
+    [],
+  );
+  const [groups, setGroups] = useState<RelatedGroups>(emptyGroups);
   const [activeKeyword, setActiveKeyword] = useState<string | null>(null);
+  const [isRecommending, setIsRecommending] = useState(false);
+  const [newIpc, setNewIpc] = useState("");
+  const [newKeyword, setNewKeyword] = useState("");
+  const [selectedTemplate, setSelectedTemplate] =
+    useState<(typeof templates)[number]["id"]>("ipc-keywords");
+  const [formula, setFormula] = useState("");
+  const [searchResults, setSearchResults] = useState<PatentItem[]>([]);
+  const [total, setTotal] = useState(0);
+  const [searchOffset, setSearchOffset] = useState(0);
+  const [isSearching, setIsSearching] = useState(false);
+  const [confirmed, setConfirmed] = useState(false);
+  const [error, setError] = useState("");
+  const relatedEntries = useMemo(
+    () => Object.entries(groups) as [keyof RelatedGroups, string[]][],
+    [groups],
+  );
+  const readyForFormula = keywords.length > 0;
 
-  const handleIPCInputChange = (value: string) => {
-    setNewIPCCode(value);
-
-    // Filter suggestions based on input
-    if (value.trim()) {
-      const filtered = ipcSuggestions.filter(
-        (ipc) =>
-          !ipcList.find((existing) => existing.code === ipc.code) &&
-          (ipc.code.toLowerCase().includes(value.toLowerCase()) ||
-            ipc.name.toLowerCase().includes(value.toLowerCase())),
-      );
-      setFilteredIPCSuggestions(filtered.slice(0, 6)); // Show max 6 suggestions
-    } else {
-      setFilteredIPCSuggestions([]);
-    }
+  const showError = (message: string) => {
+    setError(message);
+    window.setTimeout(() => setError(""), 5000);
   };
-
-  const addIPC = (ipc: IPCItem) => {
-    // Only add from suggestion list
-    setIPCList([...ipcList, ipc]);
-    setNewIPCCode("");
-    setFilteredIPCSuggestions([]);
-  };
-
-  const addKeyword = (word: string) => {
-    if (word.trim() && !keywords.find((kw) => kw.word === word.trim())) {
-      setKeywords([...keywords, { word: word.trim() }]);
-
-      // Show suggestions for the newly added keyword
-      const suggestions = keywordSuggestions[word.trim()] || [];
-      setSuggestedWords(suggestions);
-
-      setNewKeyword("");
-    }
-  };
-
-  const addSuggestedWord = (word: string) => {
-    if (!keywords.find((kw) => kw.word === word)) {
-      setKeywords([...keywords, { word }]);
-      // Remove the added word from suggestions
-      const updatedSuggestions = suggestedWords.filter((w) => w !== word);
-      setSuggestedWords(updatedSuggestions);
-      // Clear active keyword if no more suggestions
-      if (updatedSuggestions.length === 0) {
-        setActiveKeyword(null);
+  useEffect(() => {
+    if (!requestedConversationId) return;
+    let active = true;
+    const restoreFromSidebar = async () => {
+      try {
+        const response = await fetch(
+          `/api/agent/conversations/${encodeURIComponent(requestedConversationId)}`,
+        );
+        const data = await response.json();
+        if (!response.ok) throw new Error(data.error || "读取历史记录失败");
+        if (
+          data.conversation?.type !== "search_formula" ||
+          !isFormulaHistorySnapshot(data.searchResults)
+        )
+          throw new Error("该检索式历史记录内容不可用");
+        if (!active) return;
+        const snapshot = data.searchResults;
+        setFileName(snapshot.fileName);
+        setIpcList(snapshot.ipcList);
+        setKeywords(snapshot.keywords);
+        setKeywordGroups(snapshot.keywordGroups || []);
+        setSelectedTemplate(snapshot.selectedTemplate);
+        setFormula(snapshot.formula);
+        setTotal(snapshot.total);
+        setSearchOffset(snapshot.offset || 0);
+        setSearchResults(snapshot.results);
+        setConfirmed(snapshot.confirmed);
+        setIsDisclosureParsed(true);
+        setStep(3);
+      } catch (cause) {
+        if (active)
+          showError(
+            cause instanceof Error ? cause.message : "读取历史记录失败",
+          );
       }
-    }
+    };
+    void restoreFromSidebar();
+    return () => {
+      active = false;
+    };
+  }, [requestedConversationId]);
+  const addKeyword = (word: string) => {
+    const normalized = word.trim();
+    if (
+      !normalized ||
+      keywords.some(
+        (item) => item.toLocaleLowerCase() === normalized.toLocaleLowerCase(),
+      )
+    )
+      return;
+    setKeywords((current) => [...current, normalized]);
+    setNewKeyword("");
+    setFormula("");
   };
-
-  const deleteIPC = (index: number) => {
-    setIPCList(ipcList.filter((_, i) => i !== index));
+  const addIpc = () => {
+    const code = newIpc.trim().toUpperCase().replace(/\s/g, "");
+    if (!code || ipcList.some((item) => item.code === code)) return;
+    setIpcList((current) => [...current, { code, name: "手动添加" }]);
+    setNewIpc("");
+    setFormula("");
   };
-
-  const deleteKeyword = (index: number) => {
-    setKeywords(keywords.filter((_, i) => i !== index));
-  };
-
-  const handleKeywordClick = (keyword: string) => {
-    // Toggle active state
-    if (activeKeyword === keyword) {
+  const uploadDisclosure = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setFileName(file.name);
+    setIsDisclosureParsed(false);
+    setIsParsing(true);
+    setError("");
+    const form = new FormData();
+    form.append("file", file);
+    try {
+      const response = await fetch("/api/report/disclosure-parse", {
+        method: "POST",
+        body: form,
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "交底书解析失败");
+      const parsedDisclosure = data as ParsedDisclosure;
+      const strategyResponse = await fetch(
+        "/api/agent/search-formula/strategy",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            disclosure: parsedDisclosure,
+            template: selectedTemplate,
+          }),
+        },
+      );
+      const strategy = await strategyResponse.json();
+      if (!strategyResponse.ok)
+        throw new Error(strategy.error || "智能体生成检索策略失败");
+      setIpcList(
+        strategy.strategy.ipcCodes.map((code: string) => ({
+          code,
+          name: "智能体推荐",
+        })),
+      );
+      setKeywords(strategy.strategy.keywords);
+      setKeywordGroups(strategy.strategy.keywordGroups);
+      setStrategyRationale(strategy.strategy.rationale || "");
+      setGroups(emptyGroups);
       setActiveKeyword(null);
-      setSuggestedWords([]);
-    } else {
-      setActiveKeyword(keyword);
-      // Show suggestions for the clicked keyword (max 5)
-      const suggestions = (keywordSuggestions[keyword] || [])
-        .slice(0, 5)
-        .filter((word) => !keywords.find((kw) => kw.word === word));
-      setSuggestedWords(suggestions);
+      setFormula(strategy.generatedFormula || "");
+      setIsDisclosureParsed(true);
+    } catch (caught) {
+      showError(caught instanceof Error ? caught.message : "交底书解析失败");
+    } finally {
+      setIsParsing(false);
+      event.target.value = "";
     }
   };
-
-  const generateFormula = (templateId: string) => {
-    const ipcCodes = ipcList.map((ipc) => ipc.code);
-    const keywordsList = keywords.map((kw) => kw.word);
-
-    let formula = "";
-
-    switch (templateId) {
-      case "ipc-keywords":
-        // IncoPat format: IPC/CPC + Keywords in title and abstract
-        const ipcPart = ipcCodes.map((code) => `IPC=${code}`).join(" OR ");
-        const keywordPart = keywordsList
-          .map((kw) => `TI=${kw} OR AB=${kw}`)
-          .join(" OR ");
-        formula = `(${ipcPart}) AND (${keywordPart})`;
-        break;
-      case "keywords-only":
-        // IncoPat format: Keywords only in title and abstract
-        const keywordsOnlyPart = keywordsList
-          .map((kw) => `TI=${kw} OR AB=${kw}`)
-          .join(" OR ");
-        formula = `(${keywordsOnlyPart})`;
-        break;
+  const recommendRelatedWords = async (keyword: string) => {
+    setActiveKeyword(keyword);
+    setIsRecommending(true);
+    setError("");
+    try {
+      const response = await fetch("/api/report/keyword-recommendation", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ coreKeyword: keyword, desiredCount: 10 }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "关联词推荐失败");
+      const source = data.data?.groups || {};
+      setGroups({
+        上位概念: source.upperConcepts || [],
+        下位概念: source.lowerConcepts || [],
+        同类词: source.similarTerms || [],
+        英文同类词: source.englishTerms || [],
+        英文简写: source.abbreviations || [],
+      });
+    } catch (caught) {
+      showError(caught instanceof Error ? caught.message : "关联词推荐失败");
+    } finally {
+      setIsRecommending(false);
     }
-
-    setGeneratedFormula(formula);
   };
-
-  const handleTemplateSelect = (templateId: string) => {
-    setSelectedTemplate(templateId);
-    generateFormula(templateId);
+  const generateFormula = (template = selectedTemplate) => {
+    if (!readyForFormula) return showError("请至少保留一个关键词");
+    setSelectedTemplate(template);
+    setConfirmed(false);
+    setFormula(buildFormula(template, keywords, ipcList, keywordGroups));
   };
-
-  const copyToClipboard = () => {
-    navigator.clipboard.writeText(generatedFormula);
-  };
-
-  const toggleIPC = (index: number) => {
-    setIPCList(
-      ipcList.map((ipc, i) =>
-        i === index ? { ...ipc, selected: !ipc.selected } : ipc,
-      ),
-    );
-  };
-
-  const toggleKeyword = (index: number) => {
-    setKeywords(
-      keywords.map((kw, i) =>
-        i === index ? { ...kw, selected: !kw.selected } : kw,
-      ),
-    );
-  };
-
-  // Patent search
-  const handleSearch = () => {
+  const runSearch = async (offset = 0) => {
+    if (!formula.trim()) return showError("请先生成或填写检索式");
+    setStep(3);
     setIsSearching(true);
-    setTimeout(() => {
-      setSearchResults(mockPatents);
-      setOriginalSearchResults(mockPatents);
+    if (offset === 0) setConfirmed(false);
+    setError("");
+    try {
+      const response = await fetch("/api/report/patent-search", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          formula,
+          limit: SEARCH_PAGE_SIZE,
+          offset,
+        }),
+      });
+      const data = await response.json();
+      if (!response.ok) throw new Error(data.error || "检索失败");
+      const items = Array.isArray(data.items) ? data.items : [];
+      const mappedResults = items.map(
+        (item: {
+          id: string;
+          title: string;
+          applicant: string;
+          docNumber: string;
+          appDate: string;
+          pubDate: string;
+          abstract: string;
+        }) => ({
+          id: item.id,
+          title: item.title,
+          applicant: item.applicant,
+          publicationNumber: item.docNumber,
+          publicationDate: item.appDate,
+          abstract: item.abstract,
+        }),
+      );
+      const resultTotal = Number(data.total) || 0;
+      const resultOffset =
+        Number.isInteger(data.offset) && data.offset >= 0
+          ? data.offset
+          : offset;
+      setSearchResults(mappedResults);
+      setTotal(resultTotal);
+      setSearchOffset(resultOffset);
+    } catch (caught) {
+      if (offset === 0) {
+        setSearchResults([]);
+        setTotal(0);
+        setSearchOffset(0);
+      }
+      showError(caught instanceof Error ? caught.message : "检索失败");
+    } finally {
       setIsSearching(false);
-    }, 1500);
-  };
-
-  // Reset search results
-  const handleResetResults = () => {
-    setSearchResults([...originalSearchResults]);
+    }
   };
 
   return (
-    <div className="flex h-full flex-col">
-      {/* Header */}
-      <header className="flex items-center justify-between border-b border-border bg-card px-6 py-4">
-        <div className="flex items-center gap-4">
+    <div className="flex min-h-screen flex-col bg-background">
+      <header className="flex flex-wrap items-center justify-between gap-4 border-b bg-card px-6 py-4">
+        <div className="flex items-center gap-3">
           <Button
             variant="ghost"
             size="icon"
-            onClick={onBack}
-            className="h-9 w-9"
+            onClick={() => (onBack ? onBack() : router.push("/qa"))}
+            aria-label="返回"
           >
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          <div className="flex items-center gap-3">
-            <FileText className="h-5 w-5 text-primary" />
-            <div>
-              <h2 className="text-lg font-semibold text-foreground">
-                专利检索式生成
-              </h2>
-              <p className="text-xs text-muted-foreground">{fileName}</p>
-            </div>
+          <div>
+            <h1 className="text-lg font-semibold">检索式生成</h1>
+            <p className="text-xs text-muted-foreground">{fileName}</p>
           </div>
         </div>
-
-        {/* Step Indicator */}
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-2">
-            <div
-              className={cn(
-                "flex h-8 w-8 items-center justify-center rounded-full text-sm font-medium transition-colors",
-                step === 1
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-primary/10 text-primary",
-              )}
-            >
-              {step > 1 ? <Check className="h-4 w-4" /> : "1"}
-            </div>
-            <span className="text-sm font-medium text-foreground">
-              提取关键信息
-            </span>
-          </div>
-          <div className="mx-2 h-px w-8 bg-border" />
-          <div className="flex items-center gap-2">
-            <div
-              className={cn(
-                "flex h-8 w-8 items-center justify-center rounded-full text-sm font-medium transition-colors",
-                step === 2
-                  ? "bg-primary text-primary-foreground"
-                  : step > 2
-                    ? "bg-primary/10 text-primary"
-                    : "bg-muted text-muted-foreground",
-              )}
-            >
-              {step > 2 ? <Check className="h-4 w-4" /> : "2"}
-            </div>
-            <span
-              className={cn(
-                "text-sm font-medium",
-                step >= 2 ? "text-foreground" : "text-muted-foreground",
-              )}
-            >
-              生成检索式
-            </span>
-          </div>
-          <div className="mx-2 h-px w-8 bg-border" />
-          <div className="flex items-center gap-2">
-            <div
-              className={cn(
-                "flex h-8 w-8 items-center justify-center rounded-full text-sm font-medium transition-colors",
-                step === 3
-                  ? "bg-primary text-primary-foreground"
-                  : "bg-muted text-muted-foreground",
-              )}
-            >
-              3
-            </div>
-            <span
-              className={cn(
-                "text-sm font-medium",
-                step === 3 ? "text-foreground" : "text-muted-foreground",
-              )}
-            >
-              检索相关文件
-            </span>
-          </div>
+        <div className="flex flex-wrap items-center gap-2 text-sm">
+          {(["提取关键信息", "生成检索式", "检索相关文件"] as const).map(
+            (label, index) => {
+              const number = (index + 1) as Step;
+              return (
+                <div key={label} className="flex items-center gap-2">
+                  <span
+                    className={cn(
+                      "flex h-7 w-7 items-center justify-center rounded-full",
+                      step >= number
+                        ? "bg-primary text-primary-foreground"
+                        : "bg-muted text-muted-foreground",
+                    )}
+                  >
+                    {step > number ? <Check className="h-4 w-4" /> : number}
+                  </span>
+                  <span
+                    className={cn(
+                      "inline",
+                      step >= number
+                        ? "text-foreground"
+                        : "text-muted-foreground",
+                    )}
+                  >
+                    {label}
+                  </span>
+                  {index < 2 && <span className="mx-1 h-px w-5 bg-border" />}
+                </div>
+              );
+            },
+          )}
         </div>
       </header>
-
-      {/* Content */}
-      <main className="flex-1 overflow-y-auto bg-background p-6">
-        {step === 1 ? (
-          /* Step 1: Extract Information */
-          <div className="mx-auto max-w-5xl space-y-6">
-            {/* IPC/CPC List */}
-            <div className="rounded-lg border border-border bg-card p-6">
-              <div className="mb-4 flex items-center gap-2">
-                <BookOpen className="h-5 w-5 text-primary" />
-                <h3 className="text-lg font-semibold text-foreground">
-                  IPC/CPC
-                </h3>
-              </div>
-              <div className="space-y-3">
-                <div className="flex flex-wrap gap-2">
-                  {ipcList.map((ipc, index) => (
-                    <div
-                      key={index}
-                      title={ipc.name}
-                      className="group relative flex items-center rounded-lg border border-primary bg-primary/10 pr-8 pl-4 py-2 font-mono text-sm font-medium text-primary transition-all"
-                    >
-                      {ipc.code}
-                      {/* Delete button */}
-                      <button
-                        onClick={() => deleteIPC(index)}
-                        className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-destructive/90"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
-                      {/* Tooltip on hover */}
-                      <span className="pointer-events-none absolute bottom-full left-1/2 mb-2 -translate-x-1/2 whitespace-nowrap rounded-lg bg-foreground px-3 py-1.5 text-xs text-background opacity-0 transition-opacity group-hover:opacity-100 z-10">
-                        {ipc.name}
-                      </span>
-                    </div>
-                  ))}
+      <main className="mx-auto w-full min-w-0 max-w-5xl flex-1 p-4 sm:p-6">
+        {error && (
+          <div
+            role="alert"
+            className="mb-5 rounded-lg border border-destructive/30 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+          >
+            {error}
+          </div>
+        )}
+        {step === 1 && (
+          <div className="space-y-6">
+            <section className="rounded-xl border bg-card p-6">
+              <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="font-semibold">上传专利交底书</h2>
+                  <p className="mt-1 text-sm text-muted-foreground">
+                    请先上传 DOCX 或 TXT
+                    交底书，提取后可编辑关键词和分类号，再生成检索式。
+                  </p>
                 </div>
-
-                {/* Search IPC Input Row */}
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 rounded-lg border border-dashed border-border bg-accent/30 p-3">
-                    <Search className="h-4 w-4 text-muted-foreground" />
+                <Button asChild disabled={isParsing}>
+                  <label className="cursor-pointer gap-2">
+                    <Upload className="h-4 w-4" />
+                    {isParsing ? "正在提取…" : "上传交底书"}
                     <input
-                      type="text"
-                      value={newIPCCode}
-                      onChange={(e) => handleIPCInputChange(e.target.value)}
-                      placeholder="搜索 IPC/CPC 分类号"
-                      className="flex-1 bg-transparent px-2 py-1 text-sm font-mono outline-none placeholder:text-muted-foreground"
+                      className="sr-only"
+                      type="file"
+                      accept=".docx,.txt"
+                      onChange={uploadDisclosure}
                     />
-                  </div>
-
-                  {/* IPC Suggestions */}
-                  {filteredIPCSuggestions.length > 0 && (
-                    <div className="rounded-lg bg-accent/30 p-3">
-                      <p className="mb-2 text-xs font-medium text-muted-foreground">
-                        选择分类
-                      </p>
-                      <div className="flex flex-wrap gap-2">
-                        {filteredIPCSuggestions.map((ipc, index) => (
-                          <button
-                            key={index}
-                            onClick={() => addIPC(ipc)}
-                            className="group relative flex items-center rounded-lg border border-border bg-background px-4 py-2 font-mono text-sm font-medium text-foreground transition-all hover:border-primary hover:bg-primary/10 hover:text-primary"
-                            title={ipc.name}
-                          >
-                            {ipc.code}
-                            {/* Tooltip */}
-                            <span className="pointer-events-none absolute bottom-full left-1/2 mb-2 -translate-x-1/2 whitespace-nowrap rounded-lg bg-foreground px-3 py-1.5 text-xs text-background opacity-0 transition-opacity group-hover:opacity-100 z-10">
-                              {ipc.name}
-                            </span>
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* No results message */}
-                  {newIPCCode.trim() && filteredIPCSuggestions.length === 0 && (
-                    <div className="rounded-lg bg-accent/30 p-3 text-center">
-                      <p className="text-sm text-muted-foreground">
-                        未找到匹配的分类号
-                      </p>
-                    </div>
-                  )}
-                </div>
+                  </label>
+                </Button>
               </div>
-            </div>
-
-            {/* Keywords */}
-            <div className="rounded-lg border border-border bg-card p-6">
+              {isParsing && (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  正在提取关键词和分类号，请稍候…
+                </div>
+              )}
+              {strategyRationale && (
+                <div className="mt-4 rounded-lg bg-primary/5 p-3 text-sm text-muted-foreground">
+                  <span className="font-medium text-foreground">
+                    选择依据：
+                  </span>
+                  {strategyRationale}
+                </div>
+              )}
+            </section>
+            <section className="rounded-xl border bg-card p-6">
+              <div className="mb-4 flex items-center gap-2">
+                <FileText className="h-5 w-5 text-primary" />
+                <h2 className="font-semibold">
+                  IPC/CPC{" "}
+                  <span className="ml-1 text-sm font-normal text-muted-foreground">
+                    选填
+                  </span>
+                </h2>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {ipcList.map((item) => (
+                  <span
+                    key={item.code}
+                    title={item.name}
+                    className="inline-flex items-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-3 py-1.5 font-mono text-sm text-primary"
+                  >
+                    {item.code}
+                    <button
+                      onClick={() => {
+                        setIpcList((current) =>
+                          current.filter((entry) => entry.code !== item.code),
+                        );
+                        setFormula("");
+                      }}
+                      aria-label={`删除 ${item.code}`}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <input
+                  aria-label="添加专利分类号"
+                  value={newIpc}
+                  onChange={(event) => setNewIpc(event.target.value)}
+                  onKeyDown={(event) => event.key === "Enter" && addIpc()}
+                  placeholder="添加 IPC/CPC，例如 G06F16/00"
+                  className="h-10 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-primary"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={addIpc}
+                  disabled={!newIpc.trim()}
+                >
+                  <Plus className="mr-1 h-4 w-4" />
+                  添加
+                </Button>
+              </div>
+            </section>
+            <section className="rounded-xl border bg-card p-6">
               <div className="mb-4 flex items-center gap-2">
                 <Tags className="h-5 w-5 text-primary" />
-                <h3 className="text-lg font-semibold text-foreground">
-                  关键词
-                </h3>
+                <h2 className="font-semibold">
+                  关键词{" "}
+                  <span className="ml-1 text-sm font-normal text-muted-foreground">
+                    必填
+                  </span>
+                </h2>
               </div>
-              <div className="space-y-3">
-                <div className="flex flex-wrap gap-2">
-                  {keywords.map((keyword, index) => (
-                    <button
-                      key={index}
-                      onClick={() => handleKeywordClick(keyword.word)}
-                      className={cn(
-                        "group relative flex items-center rounded-lg border pr-8 pl-4 py-2 text-sm font-medium transition-all cursor-pointer",
-                        activeKeyword === keyword.word
-                          ? "border-primary bg-primary/20 text-primary ring-2 ring-primary"
-                          : "border-primary bg-primary/10 text-primary hover:bg-primary/15",
-                      )}
-                    >
-                      {keyword.word}
-                      {/* Delete button */}
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          deleteKeyword(index);
-                          if (activeKeyword === keyword.word) {
-                            setActiveKeyword(null);
-                            setSuggestedWords([]);
-                          }
-                        }}
-                        className="absolute -top-1 -right-1 flex h-4 w-4 items-center justify-center rounded-full bg-destructive text-white opacity-0 transition-opacity group-hover:opacity-100 hover:bg-destructive/90"
-                      >
-                        <X className="h-3 w-3" />
-                      </button>
+              <p className="mb-3 text-sm text-muted-foreground">
+                点击关键词获取 AI 关联词推荐；选择推荐词后将加入检索关键词。
+              </p>
+              <div className="flex flex-wrap gap-2">
+                {keywords.map((word) => (
+                  <span
+                    key={word}
+                    className={cn(
+                      "inline-flex items-center gap-2 rounded-md border px-3 py-1.5 text-sm",
+                      activeKeyword === word
+                        ? "border-primary bg-primary/15 text-primary"
+                        : "border-primary/30 bg-primary/5",
+                    )}
+                  >
+                    <button onClick={() => recommendRelatedWords(word)}>
+                      {word}
                     </button>
-                  ))}
-                </div>
-
-                {/* Add Keyword Input Row */}
-                <div className="space-y-2">
-                  <div className="flex items-center gap-2 rounded-lg border border-dashed border-border bg-accent/30 p-3">
-                    <Plus className="h-4 w-4 text-muted-foreground" />
-                    <input
-                      type="text"
-                      value={newKeyword}
-                      onChange={(e) => setNewKeyword(e.target.value)}
-                      onKeyDown={(e) =>
-                        e.key === "Enter" && addKeyword(newKeyword)
-                      }
-                      placeholder="输入关键词"
-                      className="flex-1 bg-transparent px-2 py-1 text-sm outline-none placeholder:text-muted-foreground"
-                    />
-                    <Button
-                      onClick={() => addKeyword(newKeyword)}
-                      disabled={!newKeyword.trim()}
-                      size="sm"
-                      className="h-8"
+                    <button
+                      onClick={() => {
+                        setKeywords((current) =>
+                          current.filter((item) => item !== word),
+                        );
+                        setFormula("");
+                        if (activeKeyword === word) {
+                          setActiveKeyword(null);
+                          setGroups(emptyGroups);
+                        }
+                      }}
+                      aria-label={`删除 ${word}`}
                     >
-                      添加
-                    </Button>
-                  </div>
-
-                  {/* Suggested Extended Words */}
-                  {suggestedWords.length > 0 && (
-                    <div className="rounded-lg bg-accent/30 p-3">
-                      <div className="mb-2 flex items-center gap-2">
-                        <Lightbulb className="h-4 w-4 text-primary" />
-                        <p className="text-xs font-medium text-muted-foreground">
-                          {activeKeyword
-                            ? `"${activeKeyword}" 的扩展词（同类词）`
-                            : "推荐的扩展词（同类词）"}
-                        </p>
-                      </div>
-                      <div className="flex flex-wrap gap-2">
-                        {suggestedWords.map((word, index) => (
-                          <button
-                            key={index}
-                            onClick={() => addSuggestedWord(word)}
-                            className="flex items-center gap-1.5 rounded-lg border border-border bg-background px-3 py-1.5 text-sm font-medium text-foreground transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary"
-                          >
-                            <Plus className="h-3 w-3" />
-                            {word}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </div>
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </span>
+                ))}
               </div>
-            </div>
+              <div className="mt-4 flex flex-wrap gap-2">
+                <input
+                  aria-label="添加检索关键词"
+                  value={newKeyword}
+                  onChange={(event) => setNewKeyword(event.target.value)}
+                  onKeyDown={(event) =>
+                    event.key === "Enter" && addKeyword(newKeyword)
+                  }
+                  placeholder="手动添加关键词"
+                  className="h-10 min-w-0 flex-1 rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-primary"
+                />
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => addKeyword(newKeyword)}
+                  disabled={!newKeyword.trim()}
+                >
+                  <Plus className="mr-1 h-4 w-4" />
+                  添加
+                </Button>
+              </div>
+              {(activeKeyword || isRecommending) && (
+                <div className="mt-5 rounded-lg bg-muted/60 p-4">
+                  <div className="mb-3 flex items-center gap-2 text-sm font-medium">
+                    <Lightbulb className="h-4 w-4 text-primary" />
+                    {isRecommending
+                      ? "AI 正在推荐关联词…"
+                      : `“${activeKeyword}”的 AI 关联词`}
+                    {isRecommending && (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    )}
+                  </div>
+                  <div className="space-y-3">
+                    {relatedEntries.map(([title, words]) => (
+                      <div key={title}>
+                        <p className="mb-1.5 text-xs text-muted-foreground">
+                          {title}
+                        </p>
+                        <div className="flex flex-wrap gap-2">
+                          {words.length ? (
+                            words.map((word) => (
+                              <button
+                                key={word}
+                                onClick={() => addKeyword(word)}
+                                className="rounded-md border bg-background px-2.5 py-1 text-sm hover:border-primary hover:text-primary"
+                              >
+                                <Plus className="mr-1 inline h-3 w-3" />
+                                {word}
+                              </button>
+                            ))
+                          ) : (
+                            <span className="text-xs text-muted-foreground">
+                              暂无推荐
+                            </span>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </section>
           </div>
-        ) : step === 2 ? (
-          /* Step 2: Generate Formula */
-          <div className="mx-auto max-w-5xl space-y-6">
-            {/* Template Selection */}
-            <div>
-              <h3 className="mb-4 text-lg font-semibold text-foreground">
-                选择检索式模版
-              </h3>
-              <div className="grid grid-cols-2 gap-4">
+        )}
+        {step === 2 && (
+          <div className="space-y-6">
+            <section>
+              <h2 className="mb-4 font-semibold">选择检索式模板</h2>
+              <div className="grid gap-4 sm:grid-cols-2">
                 {templates.map((template) => (
                   <button
                     key={template.id}
-                    onClick={() => handleTemplateSelect(template.id)}
+                    onClick={() => generateFormula(template.id)}
                     className={cn(
-                      "rounded-lg border p-4 text-left transition-all",
+                      "rounded-xl border p-5 text-left",
                       selectedTemplate === template.id
-                        ? "border-primary bg-primary/5 ring-2 ring-primary"
-                        : "border-border bg-card hover:bg-accent",
+                        ? "border-primary bg-primary/5 ring-1 ring-primary"
+                        : "bg-card hover:bg-muted/50",
                     )}
                   >
-                    <div className="mb-2 flex items-center justify-between">
-                      <h4 className="font-semibold text-foreground">
-                        {template.name}
-                      </h4>
-                      {selectedTemplate === template.id && (
-                        <Check className="h-5 w-5 text-primary" />
-                      )}
-                    </div>
-                    <p className="mb-3 text-sm text-muted-foreground">
+                    <h3 className="font-medium">{template.name}</h3>
+                    <p className="mt-2 text-sm text-muted-foreground">
                       {template.description}
                     </p>
-                    <div className="rounded bg-accent/50 px-3 py-2">
-                      <code className="text-xs text-foreground">
-                        {template.example}
-                      </code>
-                    </div>
+                    {template.id === "ipc-keywords" && ipcList.length === 0 && (
+                      <p className="mt-2 text-xs text-amber-600">
+                        未填写分类号时，将自动只使用关键词。
+                      </p>
+                    )}
                   </button>
                 ))}
               </div>
-            </div>
+            </section>
 
-            {/* Generated Formula */}
-            {generatedFormula && (
-              <div className="rounded-lg border border-border bg-card p-6">
-                <div className="mb-4 flex items-center justify-between">
-                  <h3 className="text-lg font-semibold text-foreground">
-                    生成的检索式
-                  </h3>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    onClick={copyToClipboard}
-                    className="gap-2 bg-transparent"
-                  >
-                    <Copy className="h-4 w-4" />
-                    复制
-                  </Button>
-                </div>
-                <Textarea
-                  value={generatedFormula}
-                  onChange={(e) => setGeneratedFormula(e.target.value)}
-                  className="min-h-[150px] resize-y font-mono text-sm bg-accent/50 border-border"
-                  placeholder="生成的检索式将显示在这里，支持手动编辑"
-                />
-                <div className="mt-4 rounded-lg bg-primary/5 p-4">
-                  <p className="text-sm text-muted-foreground">
-                    此检索式已根据您选择的IPC分类、关键词和扩展词自动生成。您可以直接在专利数据库中使用该检索式进行查询。
-                  </p>
-                </div>
+            <section className="rounded-xl border bg-card p-6">
+              <div className="mb-4 flex items-center justify-between">
+                <h2 className="font-semibold">生成的检索式</h2>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => navigator.clipboard.writeText(formula)}
+                  disabled={!formula}
+                >
+                  <Copy className="mr-1 h-4 w-4" />
+                  复制
+                </Button>
               </div>
-            )}
+              <Textarea
+                value={formula}
+                onChange={(event) => {
+                  setFormula(event.target.value);
+                }}
+                placeholder="选择模板后自动生成，也可直接编辑"
+                className="min-h-36 font-mono text-sm"
+              />
+              <p className="mt-3 text-sm text-muted-foreground">
+                检索式可编辑；运行时会按标题、摘要及 IPC/CPC 字段查询专利库。
+              </p>
+            </section>
           </div>
-        ) : (
-          /* Step 3: Search Results */
-          <div className="mx-auto max-w-5xl space-y-6">
+        )}
+        {step === 3 && (
+          <div className="space-y-5">
+            <div className="rounded-xl border bg-card p-5">
+              <p className="text-sm text-muted-foreground">当前检索式</p>
+              <p className="mt-2 break-all font-mono text-sm">{formula}</p>
+            </div>
             {isSearching ? (
-              <div className="flex h-[400px] flex-col items-center justify-center space-y-4">
-                <div className="h-12 w-12 animate-spin rounded-full border-4 border-primary border-t-transparent" />
-                <p className="text-muted-foreground">正在检索相关专利文件...</p>
+              <div className="flex min-h-64 items-center justify-center gap-2 text-muted-foreground">
+                <Loader2 className="h-5 w-5 animate-spin" />
+                正在检索相关专利文件…
               </div>
             ) : (
-              <div className="space-y-6">
+              <>
                 <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <h3 className="text-lg font-semibold text-foreground">
-                      检索结果 ({searchResults.length})
-                    </h3>
-                    {searchResults.length < originalSearchResults.length && (
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={handleResetResults}
-                        className="h-8 text-xs"
+                  <h2 className="font-semibold">检索结果（{total}）</h2>
+                  {confirmed && (
+                    <span className="flex items-center gap-1 text-sm text-primary">
+                      <Check className="h-4 w-4" />
+                      已确认
+                    </span>
+                  )}
+                </div>
+                {searchResults.length ? (
+                  <>
+                    <PatentSearchResults results={searchResults} />
+                    {total > SEARCH_PAGE_SIZE && (
+                      <nav
+                        aria-label="检索结果分页"
+                        className="flex flex-wrap items-center justify-center gap-3 pt-2"
                       >
-                        重置筛选
-                      </Button>
+                        <Button
+                          variant="outline"
+                          disabled={isSearching || searchOffset === 0}
+                          onClick={() =>
+                            void runSearch(
+                              Math.max(0, searchOffset - SEARCH_PAGE_SIZE),
+                            )
+                          }
+                        >
+                          <ArrowLeft className="mr-1 h-4 w-4" />
+                          上一页
+                        </Button>
+                        <span
+                          aria-live="polite"
+                          className="text-sm text-muted-foreground"
+                        >
+                          第 {Math.floor(searchOffset / SEARCH_PAGE_SIZE) + 1} /
+                          {Math.ceil(total / SEARCH_PAGE_SIZE)} 页 · 每页
+                          {SEARCH_PAGE_SIZE} 条
+                        </span>
+                        <Button
+                          variant="outline"
+                          disabled={
+                            isSearching ||
+                            searchOffset + SEARCH_PAGE_SIZE >= total
+                          }
+                          onClick={() =>
+                            void runSearch(searchOffset + SEARCH_PAGE_SIZE)
+                          }
+                        >
+                          下一页
+                          <ArrowRight className="ml-1 h-4 w-4" />
+                        </Button>
+                      </nav>
                     )}
+                  </>
+                ) : (
+                  <div className="rounded-xl border border-dashed p-10 text-center text-sm text-muted-foreground">
+                    未找到匹配专利，可返回上一步调整关键词后重新检索。
                   </div>
-                </div>
-
-                <div className="grid gap-4">
-                  <PatentSearchResults results={searchResults} />
-                </div>
-              </div>
+                )}
+              </>
             )}
           </div>
         )}
       </main>
-
-      {/* Footer Actions */}
-      <footer className="flex items-center justify-between border-t border-border bg-card px-6 py-4">
+      <footer className="flex flex-wrap items-center justify-between gap-3 border-t bg-card px-4 py-4 sm:px-6">
+        {step === 1 && (
+          <p role="status" className="basis-full text-sm text-muted-foreground">
+            {isParsing
+              ? "正在提取材料，完成后可继续。"
+              : !isDisclosureParsed
+                ? "请先上传交底书，提取完成后才能进入下一步。"
+                : !readyForFormula
+                  ? "请至少保留一个关键词后继续。"
+                  : "检查关键词和分类号后，点击下一步。"}
+          </p>
+        )}
         <div>
           {step > 1 && (
             <Button
               variant="outline"
-              onClick={() => setStep((s) => (s - 1) as 1 | 2 | 3)}
-              className="gap-2 bg-transparent"
+              onClick={() => setStep((step - 1) as Step)}
             >
-              <ArrowLeft className="h-4 w-4" />
+              <ArrowLeft className="mr-1 h-4 w-4" />
               返回上一步
             </Button>
           )}
         </div>
-        <div className="flex gap-2">
-          {step === 1 ? (
-            <Button onClick={() => setStep(2)} className="gap-2">
-              下一步：生成检索式
-              <ArrowRight className="h-4 w-4" />
+        {step === 1 ? (
+          <Button
+            disabled={isParsing || !isDisclosureParsed || !readyForFormula}
+            onClick={() => {
+              setStep(2);
+              if (!formula) generateFormula();
+            }}
+          >
+            下一步：生成检索式
+            <ArrowRight className="ml-1 h-4 w-4" />
+          </Button>
+        ) : step === 2 ? (
+          <Button disabled={!formula.trim()} onClick={() => void runSearch()}>
+            运行检索
+            <Search className="ml-1 h-4 w-4" />
+          </Button>
+        ) : (
+          <div className="flex flex-wrap gap-2">
+            <Button variant="outline" onClick={() => setStep(1)}>
+              调整关键词重新检索
             </Button>
-          ) : step === 2 ? (
             <Button
-              onClick={() => {
-                setStep(3);
-                handleSearch();
-              }}
-              disabled={!generatedFormula}
-              className="gap-2"
+              disabled={isSearching || !searchResults.length}
+              onClick={() => setConfirmed(true)}
             >
-              运行检索
-              <ArrowRight className="h-4 w-4" />
+              {confirmed ? "结果已确认" : "确认结果"}
             </Button>
-          ) : (
-            <Button onClick={onBack}>完成</Button>
-          )}
-        </div>
+          </div>
+        )}
       </footer>
     </div>
   );

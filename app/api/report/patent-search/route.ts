@@ -1,11 +1,33 @@
 import { NextRequest, NextResponse } from "next/server";
 import { searchPatents, type PatentSortBy } from "./service";
+import { compilePatentFormula } from "./formula";
 
 export const dynamic = "force-dynamic";
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+    if (body.formula !== undefined) {
+      try {
+        if (typeof body.formula !== "string")
+          throw new Error("检索式必须是文本");
+        compilePatentFormula(body.formula, []);
+      } catch (error) {
+        return NextResponse.json(
+          { error: error instanceof Error ? error.message : "检索式无效" },
+          { status: 400 },
+        );
+      }
+      const result = await searchPatents({
+        formula: body.formula,
+        limit: 20,
+        offset:
+          Number.isSafeInteger(body.offset) && body.offset >= 0
+            ? body.offset
+            : 0,
+      });
+      return NextResponse.json({ success: true, ...result });
+    }
     const {
       keywords,
       ipcCodes,
@@ -36,7 +58,8 @@ export async function POST(request: NextRequest) {
     ) {
       return NextResponse.json(
         {
-          error: "至少需要提供 keywords / ipcCodes / applicant / dateFrom / dateTo / kind 中的一个过滤条件",
+          error:
+            "至少需要提供 keywords / ipcCodes / applicant / dateFrom / dateTo / kind 中的一个过滤条件",
         },
         { status: 400 },
       );
@@ -56,9 +79,7 @@ export async function POST(request: NextRequest) {
         ? Math.floor(limit)
         : 20;
     const finalOffset =
-      typeof offset === "number" && offset >= 0
-        ? Math.floor(offset)
-        : 0;
+      typeof offset === "number" && offset >= 0 ? Math.floor(offset) : 0;
 
     const result = await searchPatents({
       keywords: kw,
@@ -75,10 +96,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, ...result });
   } catch (error) {
     console.error("专利检索 API 处理错误:", error);
-    return NextResponse.json(
-      { error: "专利检索失败" },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "专利检索失败" }, { status: 500 });
   }
 }
 
@@ -96,10 +114,16 @@ export async function GET(request: NextRequest) {
     const offset = sp.get("offset");
 
     const kw = keywords
-      ? keywords.split(/[，、,\n\r]/).map((s) => s.trim()).filter(Boolean)
+      ? keywords
+          .split(/[，、,\n\r]/)
+          .map((s) => s.trim())
+          .filter(Boolean)
       : [];
     const ipc = ipcCodes
-      ? ipcCodes.split(/[，、,\n\r]/).map((s) => s.trim()).filter(Boolean)
+      ? ipcCodes
+          .split(/[，、,\n\r]/)
+          .map((s) => s.trim())
+          .filter(Boolean)
       : [];
 
     if (
@@ -152,9 +176,6 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ success: true, ...result });
   } catch (error) {
     console.error("专利检索 API 处理错误:", error);
-    return NextResponse.json(
-      { error: "专利检索失败" },
-      { status: 500 },
-    );
+    return NextResponse.json({ error: "专利检索失败" }, { status: 500 });
   }
 }

@@ -8,9 +8,9 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { keywords, ipcCodes, outputFormat, stream } = body;
 
-    if (!keywords || !ipcCodes) {
+    if (!keywords) {
       return NextResponse.json(
-        { error: "缺少必要参数：keywords 和 ipcCodes" },
+        { error: "缺少必要参数：keywords" },
         { status: 400 },
       );
     }
@@ -22,9 +22,9 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    if (!Array.isArray(ipcCodes) || ipcCodes.length === 0) {
+    if (ipcCodes !== undefined && !Array.isArray(ipcCodes)) {
       return NextResponse.json(
-        { error: "ipcCodes 必须是非空数组" },
+        { error: "ipcCodes 必须是数组" },
         { status: 400 },
       );
     }
@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
 
     const params = {
       keywords,
-      ipcCodes,
+      ipcCodes: Array.isArray(ipcCodes) ? ipcCodes : [],
       outputFormat: outputFormat || "format1",
     };
 

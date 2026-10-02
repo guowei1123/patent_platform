@@ -7,27 +7,18 @@ import { CallbackHandler } from "@langfuse/langchain";
 const langfuseHandler = new CallbackHandler();
 
 // 1. 核心改动：将“背景技术生成”提示词改为“关键词推荐”提示词
-const KEYWORD_RECOMMENDATION_TEMPLATE = `你是一位资深的专利审查员。请根据用户提供的核心专利关键词，生成一批高度相关、可用于专利检索或技术情报分析的扩展关联词。
+const KEYWORD_RECOMMENDATION_TEMPLATE = `你是一位资深的专利检索专家。请根据用户提供的核心专利关键词，生成可用于专利检索的关联词。
 
 输入信息：
 1. 核心专利关键词：{coreKeyword}
 2. 期望关联词数量：{desiredCount}
 
 生成要求：
-1. **关联维度**：生成的关联词应涵盖以下多个维度：
-   - **同义词/近义词**：技术概念相同或极相近的表述。
-   - **缩写/简称**：该技术术语的通用缩写、英文简称或行业惯用语（如“人工智能”->“AI”）。
-   - **上下位概念**：更宽泛（上位词）或更具体（下位词）的技术术语。
-   - **技术关联词**：经常与该核心技术共同出现、配套使用或处于同一技术流程的其他关键技术。
-   - **应用场景词**：该技术具体应用的领域或场景。
-2. **输出格式**：请输出合法的 JSON 格式。
-   - 返回一个对象，包含一个 "recommendations" 数组。
-   - 数组中的每个元素为字符串，即推荐的关联词。
-   - 示例：
-     {{
-       "recommendations": ["机器学习", "深度学习", "神经网络模型", "图像识别", "算法优化"]
-     }}
-3. **质量要求**：关联词必须专业、精准，符合专利数据库的常用术语习惯。
+1. 按以下五类分别给出推荐：上位概念、下位概念、同类词、英文同类词、英文简写。
+2. 联想词应同时覆盖中文、英文和行业缩写：核心词为中文时，在 englishTerms、abbreviations 中给出英文对译与缩写；核心词为英文时，在 similarTerms 中给出中文对译或中文同类词。
+3. 每一类给出 0 至 3 个专业、精准的词；没有可靠候选时返回空数组，不要编造。
+4. 输出合法 JSON，字段为 upperConcepts、lowerConcepts、similarTerms、englishTerms、abbreviations。
+   示例：{{"upperConcepts":["人工智能"],"lowerConcepts":["卷积神经网络"],"similarTerms":["智能计算"],"englishTerms":["artificial intelligence"],"abbreviations":["AI"]}}
 
 请直接输出 JSON 结果，不要包含 Markdown 代码块标记（如 \`\`\`json），也不要包含开场白。`;
 
@@ -64,10 +55,18 @@ const keywordRecommendationChain = RunnableSequence.from([
  * @param params 包含核心关键词和期望数量的对象
  * @returns Promise<object> 生成的关联词对象
  */
+export type KeywordRecommendationGroups = {
+  upperConcepts: string[];
+  lowerConcepts: string[];
+  similarTerms: string[];
+  englishTerms: string[];
+  abbreviations: string[];
+};
+
 export async function generateKeywords(params: {
   coreKeyword: string;
   desiredCount: number;
-}): Promise<object> {
+}): Promise<KeywordRecommendationGroups> {
   try {
     const timeoutPromise = new Promise<object>((_, reject) => {
       setTimeout(() => reject(new Error("关键词推荐生成超时")), 20000);
@@ -80,7 +79,28 @@ export async function generateKeywords(params: {
       timeoutPromise,
     ]);
 
-    return result;
+    const raw =
+      result && typeof result === "object"
+        ? (result as Record<string, unknown>)
+        : {};
+    const list = (value: unknown) =>
+      Array.isArray(value)
+        ? [
+            ...new Set(
+              value
+                .filter((item): item is string => typeof item === "string")
+                .map((item) => item.trim())
+                .filter(Boolean),
+            ),
+          ].slice(0, 3)
+        : [];
+    return {
+      upperConcepts: list(raw.upperConcepts),
+      lowerConcepts: list(raw.lowerConcepts),
+      similarTerms: list(raw.similarTerms),
+      englishTerms: list(raw.englishTerms),
+      abbreviations: list(raw.abbreviations),
+    };
   } catch (error) {
     console.error("关键词推荐生成时发生错误:", error);
     throw error;

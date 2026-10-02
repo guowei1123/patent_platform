@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import { ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { ChatInput } from "@/components/chat-input";
@@ -26,6 +27,7 @@ type Patent = {
   title: string;
   docNumber?: string;
   applicant?: string;
+  appDate?: string;
   pubDate?: string;
   abstract?: string;
   ipcCodes?: string[];
@@ -65,6 +67,8 @@ function extractHistoryText(content: unknown): string {
 }
 
 export function AssistantWorkspace({ mode }: { mode: "qa" | "search" }) {
+  const searchParams = useSearchParams();
+  const requestedConversationId = searchParams.get("conversationId");
   const [messages, setMessages] = useState<Message[]>([]);
   const [conversations, setConversations] = useState<SidebarConversation[]>([]);
   const [conversationId, setConversationId] = useState<string | null>(null);
@@ -361,6 +365,28 @@ export function AssistantWorkspace({ mode }: { mode: "qa" | "search" }) {
     }
   };
 
+  const handleRenameConversation = async (id: string, title: string) => {
+    try {
+      const response = await fetch(`/api/agent/conversations/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "重命名失败");
+      setConversations((current) =>
+        current.map((item) =>
+          item.id === id ? { ...item, title: payload.title } : item,
+        ),
+      );
+      toast.success("已重命名历史记录");
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "重命名失败";
+      toast.error(message);
+      throw error;
+    }
+  };
+
   const handleSelectConversation = async (id: string) => {
     try {
       const response = await fetch(`/api/agent/conversations/${id}`);
@@ -398,6 +424,12 @@ export function AssistantWorkspace({ mode }: { mode: "qa" | "search" }) {
     }
   };
 
+  useEffect(() => {
+    if (!requestedConversationId || requestedConversationId === conversationId)
+      return;
+    void handleSelectConversation(requestedConversationId);
+  }, [requestedConversationId]);
+
   return (
     <div className="flex h-dvh min-h-0 overflow-hidden bg-background">
       <ChatSidebar
@@ -406,10 +438,11 @@ export function AssistantWorkspace({ mode }: { mode: "qa" | "search" }) {
         onNewChat={handleNewChat}
         onSelectConversation={handleSelectConversation}
         onDeleteConversation={handleDeleteConversation}
+        onRenameConversation={handleRenameConversation}
         mode={mode}
       />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-        <header className="flex h-14 shrink-0 items-center border-b border-border bg-card px-5 text-sm text-muted-foreground">
+        <header className="flex min-h-14 shrink-0 flex-wrap items-center py-3 border-b border-border bg-card px-5 text-sm text-muted-foreground">
           {mode === "qa" ? "通用问答" : "专利检索"} · 历史记录保存 30 天
         </header>
         <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
@@ -419,16 +452,21 @@ export function AssistantWorkspace({ mode }: { mode: "qa" | "search" }) {
               ref={scrollAreaRef}
             >
               {messages.length === 0 ? (
-                <div className="flex h-full flex-col items-center justify-center px-4 text-center">
-                  <h1 className="mb-2 text-3xl font-semibold">
-                    {mode === "qa" ? "通用专利问答" : "本地专利检索"}
+                <div className="flex min-h-full flex-col items-center justify-center px-2 py-8 text-center sm:px-4">
+                  <h1 className="mb-3 text-2xl sm:text-3xl font-semibold">
+                    {mode === "qa" ? "专利问答" : "专利检索"}
                   </h1>
                   <p className="max-w-lg text-muted-foreground">
                     {mode === "qa"
-                      ? "基于知识库资料回答专利相关问题。"
-                      : "生成检索策略后，等待您的确认再查询专利库。"}
+                      ? "输入专利相关问题，查看回答及参考资料。"
+                      : "输入技术主题或关键词，确认检索条件后查询专利库。"}
                   </p>
-                  <div className="mt-8 w-full max-w-3xl">
+                  <p className="mt-3 max-w-lg text-sm leading-6 text-muted-foreground">
+                    {mode === "qa"
+                      ? "例如：技术交底书需要包含哪些内容？"
+                      : "例如：电池低温预热控制方法，重点关注温度检测与加热策略。"}
+                  </p>
+                  <div className="mt-6 w-full max-w-3xl">
                     <ChatInput
                       onSend={handleSend}
                       mode={mode}
@@ -625,7 +663,7 @@ export function AssistantWorkspace({ mode }: { mode: "qa" | "search" }) {
                                 </span>
                               )}
                               <span className="text-muted-foreground">
-                                {item.pubDate || "日期未知"}
+                                申请日：{item.appDate || "日期未知"}
                               </span>
                             </div>
                             <h3 className="mt-2 text-lg font-semibold leading-7">
@@ -636,7 +674,7 @@ export function AssistantWorkspace({ mode }: { mode: "qa" | "search" }) {
                             href={`/patents/${item.id}`}
                             className="shrink-0 rounded-md border px-3 py-1.5 text-sm font-medium text-primary hover:bg-primary/5"
                           >
-                            专利解析
+                            专利详细内容
                           </a>
                           {shouldCollapse && (
                             <button

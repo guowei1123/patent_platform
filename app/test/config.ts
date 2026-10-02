@@ -116,17 +116,6 @@ export const testConfig: TestMenuItem[] = [
     ],
   },
   {
-    title: "专利解析",
-    icon: Search,
-    items: [
-      {
-        title: "专利文件解析",
-        url: "/test/patent/parse",
-        icon: FileText,
-      },
-    ],
-  },
-  {
     title: "通用服务",
     icon: Sparkles,
     items: [

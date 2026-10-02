@@ -1,255 +1,287 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { Button } from "@/components/ui/button";
-import { cn } from "@/lib/utils";
+import { useState } from "react";
+import Link from "next/link";
 import {
   ArrowLeft,
-  FileText,
-  CheckCircle,
-  Shield,
-  Lightbulb,
-  AlertTriangle,
-  Scale,
-  BookOpen,
-  Loader2,
+  ChevronLeft,
   ChevronRight,
+  FileText,
+  Lightbulb,
+  Search,
+  Sparkles,
   Target,
   Wrench,
   Zap,
 } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
-interface AnalysisWorkflowProps {
-  fileNames: string[];
+export type PatentAnalysisData = {
+  fileName: string;
+  result: {
+    inventionName: string;
+    applicationType: "发明" | "实用新型" | "外观设计" | "无法判断";
+    technicalField: string;
+    technicalProblem: string;
+    technicalSolution: string;
+    technicalEffect: string;
+  };
+  meta: {
+    inputTextLength: number;
+    analyzedTextLength: number;
+    truncated: boolean;
+    includedSections: string[];
+    figureCount?: number;
+  };
+};
+
+export type PatentAnalysisSummaryData = {
+  overview: string;
+  commonTechnicalProblems: string[];
+  commonTechnicalSolutions: string[];
+  technicalEffects: string[];
+  differences: string[];
+  searchFocus: string[];
+};
+
+export function AnalysisWorkflow({
+  analyses,
+  summary,
+  onBack,
+}: {
+  analyses: PatentAnalysisData[];
+  summary?: PatentAnalysisSummaryData;
   onBack: () => void;
-}
-
-interface AnalysisSection {
-  title: string;
-  icon: React.ReactNode;
-  content: string;
-  items?: string[];
-}
-
-export function AnalysisWorkflow({ fileNames, onBack }: AnalysisWorkflowProps) {
-  const [isAnalyzing, setIsAnalyzing] = useState(true);
-  const [progress, setProgress] = useState(0);
-  const [selectedFileIndex, setSelectedFileIndex] = useState(0);
-
-  // 模拟解析过程
-  useEffect(() => {
-    if (isAnalyzing) {
-      const interval = setInterval(() => {
-        setProgress((prev) => {
-          if (prev >= 100) {
-            clearInterval(interval);
-            setIsAnalyzing(false);
-            return 100;
-          }
-          return prev + 2;
-        });
-      }, 50);
-      return () => clearInterval(interval);
-    }
-  }, [isAnalyzing]);
-
-  const currentFileName = fileNames[selectedFileIndex] || "该文件";
-
-  const analysisSections: AnalysisSection[] = [
-    {
-      title: "技术问题",
-      icon: <AlertTriangle className="h-5 w-5 text-rose-500" />,
-      content: `本专利（${currentFileName}）主要致力于解决在复杂光照条件下，现有图像识别算法准确率下降以及处理延迟过高的问题。`,
-      items: [
-        "现有技术中，低光照环境导致图像特征丢失严重。",
-        "传统图像增强算法计算复杂度高，难以满足实时性要求。",
-      ],
-    },
-    {
-      title: "技术手段",
-      icon: <Wrench className="h-5 w-5 text-blue-500" />,
-      content: `针对${currentFileName}提出的问题，采用了一种基于深度学习的自适应图像增强与识别联合框架。`,
-      items: [
-        "引入轻量级注意力机制网络（Lightweight Attention Network）进行特征提取。",
-        "设计了动态光照补偿模块，根据输入图像直方图自动调整增强参数。",
-        "采用端到端训练策略，联合优化增强模块与识别模块。",
-      ],
-    },
-    {
-      title: "技术效果",
-      icon: <Zap className="h-5 w-5 text-emerald-500" />,
-      content: `通过对${currentFileName}的实施，实现了在保证高识别准确率的同时，显著降低了计算开销。`,
-      items: [
-        "在低光照测试集上，识别准确率提升了15.3%。",
-        "相比传统算法，推理速度提升了2倍，满足移动端实时处理需求。",
-        "模型体积减小了40%，便于在资源受限设备上部署。",
-      ],
-    },
-  ];
+}) {
+  const [selectedIndex, setSelectedIndex] = useState(0);
+  const selected = analyses[selectedIndex];
+  const previous = () =>
+    setSelectedIndex((current) => Math.max(0, current - 1));
+  const next = () =>
+    setSelectedIndex((current) => Math.min(analyses.length - 1, current + 1));
 
   return (
-    <div className="flex h-screen flex-col bg-background">
-      {/* Header */}
-      <header className="flex items-center justify-between border-b border-border bg-card px-6 py-4">
-        <div className="flex items-center gap-4">
+    <main className="flex h-full min-h-0 flex-1 flex-col overflow-hidden bg-background">
+      <header className="flex flex-wrap items-center justify-between gap-3 border-b bg-card px-4 py-3 sm:px-6">
+        <div className="flex min-w-0 items-center gap-3">
           <Button
             variant="ghost"
             size="icon"
+            aria-label="返回专利解析输入页"
             onClick={onBack}
-            className="h-9 w-9"
           >
             <ArrowLeft className="h-5 w-5" />
           </Button>
-          <div className="flex items-center gap-3">
-            <FileText className="h-5 w-5 text-primary" />
-            <div>
-              <h2 className="text-lg font-semibold text-foreground">
-                专利深度解析
-              </h2>
-              <p className="text-xs text-muted-foreground">
-                {fileNames.length > 1
-                  ? `共 ${fileNames.length} 个文件`
-                  : fileNames[0]}
-              </p>
-            </div>
+          <div className="min-w-0">
+            <h1 className="text-lg font-semibold">专利解析结果</h1>
+            <p className="truncate text-sm text-muted-foreground">
+              已完成 {analyses.length} 份文献的结构化解析
+              {analyses.length > 1 ? "与对比" : ""}
+            </p>
           </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button variant="outline" onClick={onBack}>
+            解析新文件
+          </Button>
         </div>
       </header>
 
-      {/* Content */}
-      <main className="flex flex-1 flex-col overflow-hidden">
-        {/* Top Section: Tabs + Results */}
-        <div className="flex flex-1 flex-col overflow-hidden">
-          {/* File Tabs - Fixed */}
-          <div className="border-b border-border bg-background px-6 pt-6">
-            <div className="mx-auto max-w-4xl">
-              {fileNames.length > 0 && (
-                <div className="flex w-full overflow-x-auto">
-                  {fileNames.map((name, index) => (
-                    <button
-                      key={index}
-                      onClick={() => setSelectedFileIndex(index)}
-                      className={cn(
-                        "relative px-4 py-3 text-sm font-medium transition-all whitespace-nowrap border-b-2",
-                        selectedFileIndex === index
-                          ? "border-primary text-primary bg-primary/5"
-                          : "border-transparent text-muted-foreground hover:text-foreground hover:bg-accent/50",
-                      )}
-                    >
-                      {name}
-                    </button>
-                  ))}
+      <div className="border-b bg-card/50 px-4 pt-3 sm:px-6">
+        <div
+          role="tablist"
+          aria-label="已解析文件"
+          className="flex gap-1 overflow-x-auto"
+        >
+          {analyses.map((item, index) => (
+            <button
+              key={item.fileName}
+              role="tab"
+              aria-selected={selectedIndex === index}
+              onClick={() => setSelectedIndex(index)}
+              className={cn(
+                "max-w-56 shrink-0 truncate rounded-t-lg border-b-2 px-3 py-2 text-sm transition-colors",
+                selectedIndex === index
+                  ? "border-primary bg-primary/5 font-medium text-primary"
+                  : "border-transparent text-muted-foreground hover:bg-muted hover:text-foreground",
+              )}
+              title={item.fileName}
+            >
+              {item.fileName}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex-1 overflow-y-auto p-4 sm:p-6">
+        <div className="mx-auto max-w-5xl space-y-6">
+          <section className="rounded-2xl border bg-card p-5 shadow-sm sm:p-6">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0">
+                <p className="text-sm text-muted-foreground">当前文件</p>
+                <h2 className="mt-1 break-words text-xl font-semibold">
+                  {selected.result.inventionName || selected.fileName}
+                </h2>
+                <p className="mt-2 text-sm text-muted-foreground">
+                  {selected.result.applicationType} · 已分析约{" "}
+                  {selected.meta.analyzedTextLength} 字
+                  {selected.meta.truncated ? "（已按字段上限截取）" : ""}
+                  {selected.meta.figureCount
+                    ? ` · 已结合 ${selected.meta.figureCount} 张附图`
+                    : ""}
+                </p>
+              </div>
+              {analyses.length > 1 && (
+                <div className="flex items-center gap-2">
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    aria-label="上一份专利"
+                    onClick={previous}
+                    disabled={selectedIndex === 0}
+                  >
+                    <ChevronLeft className="h-4 w-4" />
+                  </Button>
+                  <span className="text-sm tabular-nums text-muted-foreground">
+                    {selectedIndex + 1} / {analyses.length}
+                  </span>
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    aria-label="下一份专利"
+                    onClick={next}
+                    disabled={selectedIndex === analyses.length - 1}
+                  >
+                    <ChevronRight className="h-4 w-4" />
+                  </Button>
                 </div>
               )}
             </div>
-          </div>
 
-          {/* Analysis Results - Scrollable */}
-          <div className="flex-1 overflow-y-auto p-6 custom-scrollbar">
-            <div className="mx-auto max-w-4xl space-y-6">
-              {isAnalyzing ? (
-                /* Loading State */
-                <div className="flex h-full flex-col items-center justify-center space-y-6">
-                  <div className="relative h-32 w-32">
-                    <div className="absolute inset-0 animate-spin rounded-full border-4 border-primary/20 border-t-primary" />
-                    <div className="absolute inset-0 flex items-center justify-center">
-                      <span className="text-xl font-bold text-primary">
-                        {progress}%
-                      </span>
-                    </div>
-                  </div>
-                  <div className="text-center space-y-2">
-                    <h3 className="text-xl font-semibold text-foreground">
-                      正在深度解析专利文档...
-                    </h3>
-                    <p className="text-muted-foreground">
-                      正在分析：{fileNames[selectedFileIndex]}
-                    </p>
-                  </div>
+            <div className="mt-6 grid gap-4 md:grid-cols-2">
+              <AnalysisCard
+                icon={<Target className="h-5 w-5 text-violet-600" />}
+                title="技术领域"
+                content={selected.result.technicalField}
+              />
+              <AnalysisCard
+                icon={<Sparkles className="h-5 w-5 text-amber-600" />}
+                title="技术问题"
+                content={selected.result.technicalProblem}
+              />
+              <AnalysisCard
+                icon={<Wrench className="h-5 w-5 text-blue-600" />}
+                title="技术方案"
+                content={selected.result.technicalSolution}
+              />
+              <AnalysisCard
+                icon={<Zap className="h-5 w-5 text-emerald-600" />}
+                title="技术效果"
+                content={selected.result.technicalEffect}
+              />
+            </div>
+          </section>
+
+          {analyses.length > 1 && summary && (
+            <section className="rounded-2xl border bg-card p-5 shadow-sm sm:p-6">
+              <div className="flex items-center gap-3">
+                <span className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10">
+                  <Lightbulb className="h-5 w-5 text-primary" />
+                </span>
+                <div>
+                  <h2 className="font-semibold">专利解析总结</h2>
+                  <p className="text-sm text-muted-foreground">
+                    基于各份结构化解析结果生成的比较结论
+                  </p>
                 </div>
-              ) : (
-                /* Analysis Results - Technical Cards */
-                <div className="space-y-6 animate-in fade-in duration-500 slide-in-from-bottom-4">
-                  <div className="rounded-xl border border-border bg-card p-6 shadow-sm transition-all hover:shadow-md">
-                    {analysisSections.map((section, index) => (
-                      <div
-                        key={index}
-                        className={cn(
-                          index !== 0 && "mt-8 border-t border-border pt-8",
-                        )}
+              </div>
+              <p className="mt-5 whitespace-pre-wrap leading-7 text-muted-foreground">
+                {summary.overview || "原文信息不足，暂无法形成概括性总结。"}
+              </p>
+              <div className="mt-6 grid gap-5 md:grid-cols-2">
+                <SummaryList
+                  title="共同技术问题"
+                  items={summary.commonTechnicalProblems}
+                />
+                <SummaryList
+                  title="共同技术方案"
+                  items={summary.commonTechnicalSolutions}
+                />
+                <SummaryList
+                  title="技术效果"
+                  items={summary.technicalEffects}
+                />
+                <SummaryList title="文件间差异" items={summary.differences} />
+              </div>
+              <div className="mt-6 border-t pt-5">
+                <div className="flex items-center gap-2 font-medium">
+                  <Search className="h-4 w-4 text-primary" />
+                  后续检索关注点
+                </div>
+                {summary.searchFocus.length ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {summary.searchFocus.map((item) => (
+                      <span
+                        key={item}
+                        className="rounded-full bg-primary/10 px-3 py-1 text-sm text-primary"
                       >
-                        <div className="mb-4 flex items-center gap-3">
-                          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-accent">
-                            {section.icon}
-                          </div>
-                          <h3 className="text-lg font-semibold text-foreground">
-                            {section.title}
-                          </h3>
-                        </div>
-
-                        <div className="pl-[52px]">
-                          <p className="mb-4 text-sm text-foreground/80 leading-relaxed">
-                            {section.content}
-                          </p>
-
-                          {section.items && (
-                            <ul className="space-y-2">
-                              {section.items.map((item, i) => (
-                                <li
-                                  key={i}
-                                  className="flex items-start gap-2 text-sm text-muted-foreground"
-                                >
-                                  <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary/60" />
-                                  <span>{item}</span>
-                                </li>
-                              ))}
-                            </ul>
-                          )}
-                        </div>
-                      </div>
+                        {item}
+                      </span>
                     ))}
                   </div>
-
-                  {/* Patent Analysis Summary - Only show if multiple files */}
-                  {!isAnalyzing && fileNames.length > 1 && (
-                    <div className="rounded-xl border border-border bg-card p-6 shadow-sm transition-all hover:shadow-md">
-                      <div className="mb-4 flex items-center gap-3">
-                        <div className="flex h-10 w-10 items-center justify-center rounded-full bg-accent">
-                          <Lightbulb className="h-5 w-5 text-amber-500" />
-                        </div>
-                        <h3 className="text-lg font-semibold text-foreground">
-                          专利解析总结
-                        </h3>
-                      </div>
-
-                      <div className="pl-[52px]">
-                        <p className="mb-4 text-sm text-foreground/80 leading-relaxed">
-                          综合分析上述{fileNames.length}
-                          份专利文档，可以看出该技术领域主要集中在解决复杂环境下的图像识别精度与效率问题。各专利方案在技术手段上各有侧重，但均采用了深度学习与传统图像处理相结合的思路。
-                        </p>
-                        <ul className="space-y-2">
-                          <li className="flex items-start gap-2 text-sm text-muted-foreground">
-                            <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary/60" />
-                            <span>
-                              共性技术：均引入了注意力机制来增强特征提取能力。
-                            </span>
-                          </li>
-                          <li className="flex items-start gap-2 text-sm text-muted-foreground">
-                            <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary/60" />
-                            <span>
-                              演进趋势：从单纯的算法优化向软硬件协同设计方向发展。
-                            </span>
-                          </li>
-                        </ul>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          </div>
+                ) : (
+                  <p className="mt-2 text-sm text-muted-foreground">
+                    原文信息不足，暂未提取检索关注点。
+                  </p>
+                )}
+              </div>
+            </section>
+          )}
         </div>
-      </main>
-    </div>
+      </div>
+    </main>
+  );
+}
+
+function AnalysisCard({
+  icon,
+  title,
+  content,
+}: {
+  icon: React.ReactNode;
+  title: string;
+  content: string;
+}) {
+  return (
+    <article className="rounded-xl border bg-muted/25 p-4">
+      <div className="flex items-center gap-2 font-medium">
+        {icon}
+        {title}
+      </div>
+      <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-muted-foreground">
+        {content || "原文未披露"}
+      </p>
+    </article>
+  );
+}
+
+function SummaryList({ title, items }: { title: string; items: string[] }) {
+  return (
+    <section>
+      <h3 className="font-medium">{title}</h3>
+      {items.length ? (
+        <ul className="mt-2 space-y-2 text-sm leading-6 text-muted-foreground">
+          {items.map((item, index) => (
+            <li key={index} className="flex gap-2">
+              <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-primary/70" />
+              <span>{item}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="mt-2 text-sm text-muted-foreground">原文未披露。</p>
+      )}
+    </section>
   );
 }

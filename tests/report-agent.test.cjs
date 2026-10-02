@@ -485,3 +485,182 @@ test("全文字段只使用数据库实际存在的白名单列", () => {
     { claims: "claim_text" },
   );
 });
+
+
+const {
+  parsePatentModelResponse,
+  PatentModelResponseError,
+  analyzePatentContent,
+  summarizePatentAnalyses,
+} = require("../app/api/patent/parse/service.ts");
+
+const validPatentResult = {
+  inventionName: "冷却装置", applicationType: "无法判断",
+  technicalField: "电池热管理", technicalProblem: "温差较大",
+  technicalSolution: "检测温度并调节泵速", technicalEffect: "减小温差",
+};
+const patentInput = {
+  bibliographicData: "", title: "", abstract: "", description: "电池冷却材料",
+  claims: "", drawings: "",
+};
+const validPatentSummary = {
+  overview: "两份材料涉及电池冷却", commonTechnicalProblems: ["温度不均"],
+  commonTechnicalSolutions: ["调节冷却流量"], technicalEffects: [],
+  differences: [], searchFocus: ["电池冷却"],
+};
+const patentAnalyses = [
+  { fileName: "a.pdf", result: validPatentResult },
+  { fileName: "b.pdf", result: validPatentResult },
+];
+
+async function withPatentMock(invoke, action) {
+  const { ChatOpenAI } = require("@langchain/openai");
+  const original = ChatOpenAI.prototype.invoke;
+  const oldKey = process.env.OPENAI_API_KEY;
+  const oldError = console.error;
+  const logs = [];
+  process.env.OPENAI_API_KEY = "test-key";
+  ChatOpenAI.prototype.invoke = invoke;
+  console.error = (...args) => logs.push(args);
+  try { await action(logs); }
+  finally {
+    ChatOpenAI.prototype.invoke = original;
+    console.error = oldError;
+    if (oldKey === undefined) delete process.env.OPENAI_API_KEY;
+    else process.env.OPENAI_API_KEY = oldKey;
+  }
+}
+function patentResponse(value, finishReason = "stop") {
+  return { content: JSON.stringify(value), response_metadata: { finish_reason: finishReason } };
+}
+
+test("专利 JSON 内容块无损拼接且忽略推理块", () => {
+  const text = JSON.stringify(validPatentResult);
+  const result = parsePatentModelResponse([
+    { type: "reasoning", text: "推理不是最终答案" },
+    { type: "text", text: text.slice(0, 30) },
+    { type: "output_text", text: text.slice(30) },
+  ]);
+  assert.deepEqual(result, validPatentResult);
+});
+
+test("专利格式严格拒绝缺字段、错误类型、额外字段和非约定申请类型", () => {
+  const missing = { ...validPatentResult };
+  delete missing.technicalEffect;
+  for (const value of [
+    {}, missing, { ...validPatentResult, technicalSolution: ["检测温度"] },
+    { ...validPatentResult, technicalField: null },
+    { ...validPatentResult, inventionName: 123 },
+    { ...validPatentResult, applicationType: "发明专利" },
+    { ...validPatentResult, extra: "不能增加字段" },
+    { data: validPatentResult }, [validPatentResult],
+  ]) assert.throws(() => parsePatentModelResponse(JSON.stringify(value)), PatentModelResponseError);
+  assert.deepEqual(parsePatentModelResponse(JSON.stringify({
+    ...validPatentResult, technicalEffect: "",
+  })), { ...validPatentResult, technicalEffect: "" });
+});
+
+test("专利格式严格拒绝空响应、截断 JSON、解释文字和代码围栏", () => {
+  const text = JSON.stringify(validPatentResult);
+  for (const value of [null, "", "null", text.slice(0, -1), "结果如下：" + text,
+    "\x60\x60\x60json\n" + text + "\n\x60\x60\x60"]) {
+    assert.throws(() => parsePatentModelResponse(value), PatentModelResponseError);
+  }
+});
+
+test("单份解析和多份汇总都发送必填字段和禁止额外字段的严格 Schema", async () => {
+  let calls = 0;
+  await withPatentMock(async (messages, options) => {
+    calls += 1;
+    const format = options.response_format;
+    assert.equal(format.type, "json_schema");
+    assert.equal(format.json_schema.strict, true);
+    const schema = format.json_schema.schema;
+    assert.equal(schema.additionalProperties, false);
+    assert.deepEqual(schema.required.sort(), Object.keys(schema.properties).sort());
+    if (calls === 1) {
+      assert.deepEqual(schema.properties.applicationType.enum, ["发明", "实用新型", "外观设计", "无法判断"]);
+      return patentResponse(validPatentResult);
+    }
+    assert.equal(schema.properties.commonTechnicalProblems.maxItems, 8);
+    assert.equal(schema.properties.searchFocus.maxItems, 12);
+    return patentResponse(validPatentSummary);
+  }, async () => {
+    assert.deepEqual(await analyzePatentContent(patentInput), validPatentResult);
+    assert.deepEqual(await summarizePatentAnalyses(patentAnalyses), validPatentSummary);
+    assert.equal(calls, 2);
+  });
+});
+
+test("模型首轮格式错误时按原始材料重新生成一次并校验", async () => {
+  let calls = 0;
+  await withPatentMock(async (messages) => {
+    calls += 1;
+    if (calls === 1) return patentResponse({ inventionName: "不能补空字段" });
+    assert.match(messages[0].content, /上次输出未通过格式校验/);
+    assert.ok(messages.some((message) => JSON.stringify(message.content).includes("电池冷却材料")));
+    return patentResponse(validPatentResult);
+  }, async () => {
+    assert.deepEqual(await analyzePatentContent(patentInput), validPatentResult);
+    assert.equal(calls, 2);
+  });
+});
+
+test("模型连续不合规时停止重试并拒绝成功结果，日志不包含原文", async () => {
+  let calls = 0;
+  const privateText = "私有专利原文禁止写入日志";
+  await withPatentMock(async () => {
+    calls += 1;
+    return { content: privateText, response_metadata: { finish_reason: "stop" } };
+  }, async (logs) => {
+    await assert.rejects(analyzePatentContent(patentInput), PatentModelResponseError);
+    assert.equal(calls, 2);
+    assert.equal(logs.length, 2);
+    assert.ok(!JSON.stringify(logs).includes(privateText));
+  });
+});
+
+test("模型标记截断或内容过滤时即使 JSON 合法也不得通过", async () => {
+  for (const reason of ["length", "content_filter"]) {
+    let calls = 0;
+    await withPatentMock(async () => { calls += 1; return patentResponse(validPatentResult, reason); }, async () => {
+      await assert.rejects(analyzePatentContent(patentInput), PatentModelResponseError);
+      assert.equal(calls, 2);
+    });
+  }
+});
+
+test("多份汇总拒绝超限数组、错误元素、缺字段和额外字段", async () => {
+  const missing = { ...validPatentSummary };
+  delete missing.overview;
+  for (const bad of [
+    { ...validPatentSummary, commonTechnicalProblems: Array(9).fill("问题") },
+    { ...validPatentSummary, searchFocus: Array(13).fill("关键词") },
+    { ...validPatentSummary, technicalEffects: [123] },
+    { ...validPatentSummary, differences: "不是数组" },
+    { ...validPatentSummary, extra: "额外字段" }, missing,
+  ]) {
+    let calls = 0;
+    await withPatentMock(async () => { calls += 1; return patentResponse(bad); }, async () => {
+      await assert.rejects(summarizePatentAnalyses(patentAnalyses), PatentModelResponseError);
+      assert.equal(calls, 2);
+    });
+  }
+});
+
+test("汇总错误可重新生成一次恢复，服务商错误不会触发格式重试", async () => {
+  let calls = 0;
+  await withPatentMock(async () => {
+    calls += 1;
+    return patentResponse(calls === 1 ? {} : validPatentSummary);
+  }, async () => {
+    assert.deepEqual(await summarizePatentAnalyses(patentAnalyses), validPatentSummary);
+    assert.equal(calls, 2);
+  });
+  calls = 0;
+  const upstreamError = Object.assign(new Error("schema unsupported"), { status: 400 });
+  await withPatentMock(async () => { calls += 1; throw upstreamError; }, async () => {
+    await assert.rejects(analyzePatentContent(patentInput), (error) => error === upstreamError);
+    assert.equal(calls, 1);
+  });
+});

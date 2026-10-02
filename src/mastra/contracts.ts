@@ -120,10 +120,12 @@ export const searchResumeSchema = z.object({
 });
 
 export const conversationTypeSchema = z.enum([
+  "analysis",
   "qa",
   "search",
   "report",
   "disclosure",
+  "search_formula",
 ]);
 export type ConversationType = z.infer<typeof conversationTypeSchema>;
 

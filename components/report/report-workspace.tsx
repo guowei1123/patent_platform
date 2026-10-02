@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import { useSearchParams } from "next/navigation";
 import {
   CircleAlert,
   Download,
@@ -105,7 +106,23 @@ const initialEvaluation = {
   isCommonKnowledgeOrObvious: false,
 };
 
+const stageName = (stage: string) =>
+  ({
+    initializing: "准备报告",
+    "prepare-report-strategy": "提取材料与准备检索条件",
+    strategy: "确认检索条件",
+    "document-selection": "选择对比文献",
+    "classification-review": "复核文献分析",
+    "evaluation-input": "填写评估信息",
+    "final-report": "确认报告",
+    completed: "报告已完成",
+    failed: "处理失败",
+    cancelled: "已取消",
+  })[stage] || "处理报告";
+
 export function ReportWorkspace() {
+  const searchParams = useSearchParams();
+  const requestedConversationId = searchParams.get("conversationId");
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [conversations, setConversations] = useState<SidebarConversation[]>([]);
   const [activeConversationId, setActiveConversationId] = useState<
@@ -166,6 +183,15 @@ export function ReportWorkspace() {
       setBusy(false);
     }
   };
+
+  useEffect(() => {
+    if (
+      !requestedConversationId ||
+      requestedConversationId === activeConversationId
+    )
+      return;
+    void selectConversation(requestedConversationId);
+  }, [requestedConversationId]);
 
   const createReport = async () => {
     if (!file) return;
@@ -263,6 +289,37 @@ export function ReportWorkspace() {
     }
   };
 
+  const renameHistoryConversation = async (
+    conversationId: string,
+    title: string,
+  ) => {
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch(
+        `/api/agent/conversations/${conversationId}`,
+        {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title }),
+        },
+      );
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error || "重命名失败");
+      setConversations((current) =>
+        current.map((item) =>
+          item.id === conversationId ? { ...item, title: payload.title } : item,
+        ),
+      );
+    } catch (cause) {
+      const error = cause instanceof Error ? cause : new Error("重命名失败");
+      setError(error.message);
+      throw error;
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const exportReport = async () => {
     if (!report) return;
     setBusy(true);
@@ -316,12 +373,12 @@ export function ReportWorkspace() {
     string,
     { id: string; reason: string; matchedFeatureIds?: string[] }
   >(
-    (
-      pending?.kind === "document-selection" ? pending.data?.screening : []
-    ).map((item: { id: string; reason: string; matchedFeatureIds?: string[] }) => [
-      item.id,
-      item,
-    ]),
+    (pending?.kind === "document-selection" ? pending.data?.screening : []).map(
+      (item: { id: string; reason: string; matchedFeatureIds?: string[] }) => [
+        item.id,
+        item,
+      ],
+    ),
   );
   const categoryCounts = useMemo(() => {
     const counts = { X: 0, Y: 0, A: 0 };
@@ -333,7 +390,7 @@ export function ReportWorkspace() {
   }, [classifications]);
 
   return (
-    <main className="flex h-screen min-h-0 bg-background">
+    <main className="flex h-dvh min-h-0 bg-background">
       <ChatSidebar
         conversations={conversations}
         activeConversationId={activeConversationId}
@@ -345,17 +402,18 @@ export function ReportWorkspace() {
         }}
         onSelectConversation={selectConversation}
         onDeleteConversation={deleteHistoryConversation}
+        onRenameConversation={renameHistoryConversation}
         mode="report"
       />
       <section className="min-w-0 flex-1 overflow-y-auto">
-        <header className="sticky top-0 z-10 flex h-14 items-center border-b bg-card px-6">
+        <header className="sticky top-0 z-10 flex min-h-14 flex-wrap items-center gap-y-1 border-b bg-card px-4 py-3 sm:px-6">
           <FileText className="mr-2 h-5 w-5" />
-          <span className="font-semibold">专利检索报告智能体</span>
+          <span className="font-semibold">生成专利检索报告</span>
           <span className="ml-3 text-sm text-muted-foreground">
-            人工确认 · 可恢复工作流
+            上传材料 → 确认检索条件 → 分析文献 → 导出报告
           </span>
         </header>
-        <div className="mx-auto max-w-5xl space-y-5 p-6">
+        <div className="mx-auto max-w-5xl space-y-5 p-4 sm:p-6">
           {error && (
             <div className="rounded-lg border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
               {error}
@@ -364,7 +422,7 @@ export function ReportWorkspace() {
           {busy && (
             <div className="flex items-center gap-2 rounded-lg border bg-card p-3 text-sm">
               <Loader2 className="h-4 w-4 animate-spin" />
-              智能体正在执行当前步骤，请稍候……
+              正在处理当前步骤，请稍候…
             </div>
           )}
 
@@ -372,6 +430,9 @@ export function ReportWorkspace() {
             <Card>
               <CardHeader>
                 <CardTitle>上传专利交底书</CardTitle>
+                <p className="text-sm leading-6 text-muted-foreground">
+                  选择 DOCX 文件后开始。接下来需要你确认检索条件和分析结果。
+                </p>
               </CardHeader>
               <CardContent className="space-y-4">
                 <input
@@ -410,8 +471,11 @@ export function ReportWorkspace() {
               </CardHeader>
               <CardContent className="flex flex-wrap gap-3 text-sm">
                 <span>状态：{statusLabel}</span>
-                <span>当前阶段：{report.currentStage}</span>
-                <span>报告编号：{report.id}</span>
+                <span>当前阶段：{stageName(report.currentStage)}</span>
+                <details className="basis-full text-muted-foreground">
+                  <summary className="cursor-pointer">查看报告编号</summary>
+                  <p className="mt-1 break-all">{report.id}</p>
+                </details>
                 {report.status === "failed" && (
                   <div className="basis-full rounded-md border border-destructive/30 bg-destructive/5 p-3 text-destructive">
                     失败原因：{report.errorMessage || "报告工作流执行失败"}
@@ -450,7 +514,7 @@ export function ReportWorkspace() {
                 </div>
                 <div>
                   <p className="mb-1 text-muted-foreground">技术方案摘要</p>
-                  <p className="line-clamp-3 leading-6">
+                  <p className="whitespace-pre-wrap break-words leading-6">
                     {report.state.disclosure.technicalSolution || "未提取"}
                   </p>
                 </div>
@@ -468,7 +532,7 @@ export function ReportWorkspace() {
               </CardHeader>
               <CardContent className="space-y-4 text-sm text-muted-foreground">
                 <p>
-                  此任务创建时未完整保存工作流上下文，因此没有可恢复的检索策略或待确认内容。
+                  该历史任务缺少继续处理所需的数据。请重新上传交底书，开始新的报告。
                 </p>
                 <Button onClick={resetToUpload}>
                   <RotateCcw className="mr-2 h-4 w-4" />
@@ -484,7 +548,7 @@ export function ReportWorkspace() {
               <Card>
                 <CardContent className="flex items-center gap-3 p-5 text-sm text-muted-foreground">
                   <Loader2 className="h-5 w-5 animate-spin" />
-                  正在执行“{report.currentStage}
+                  正在执行“{stageName(report.currentStage)}
                   ”步骤。完成后将自动进入下一项人工确认。
                 </CardContent>
               </Card>
@@ -567,7 +631,7 @@ export function ReportWorkspace() {
                     className="min-h-36"
                   />
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button
                     disabled={busy || !strategy.keywords?.length}
                     onClick={() =>
@@ -602,7 +666,7 @@ export function ReportWorkspace() {
                     (round: { status: string }) =>
                       round.status === "pending_vector_index",
                   )
-                    ? " 语义检索通道已保留，待向量库接入后自动参与召回。"
+                    ? " 本次未使用语义检索。"
                     : ""}
                 </p>
                 {patents.map((patent) => (
@@ -630,7 +694,9 @@ export function ReportWorkspace() {
                         {patent.abstract}
                       </span>
                       <span className="mt-1 block text-xs text-muted-foreground">
-                        初筛依据：{screeningById.get(patent.id)?.reason || "已进入深度比对"}
+                        初筛依据：
+                        {screeningById.get(patent.id)?.reason ||
+                          "已进入深度比对"}
                         {patent.retrievalRouteIds?.length
                           ? ` · 命中 ${patent.retrievalRouteIds.length} 条检索路径`
                           : ""}
@@ -640,10 +706,10 @@ export function ReportWorkspace() {
                 ))}
                 {patents.length === 0 && (
                   <p className="text-muted-foreground">
-                    当前策略未检索到候选文献，请取消后重新创建任务并调整策略。
+                    当前条件未检索到候选文献，请点击“返回检索策略”调整关键词。
                   </p>
                 )}
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button
                     disabled={busy || selectedPatentIds.length === 0}
                     onClick={() =>
@@ -708,13 +774,13 @@ export function ReportWorkspace() {
                           )
                         }
                       >
-                        <SelectTrigger className="w-24">
+                        <SelectTrigger className="w-40">
                           <SelectValue />
                         </SelectTrigger>
                         <SelectContent>
-                          <SelectItem value="X">X</SelectItem>
-                          <SelectItem value="Y">Y</SelectItem>
-                          <SelectItem value="A">A</SelectItem>
+                          <SelectItem value="X">X 类文献</SelectItem>
+                          <SelectItem value="Y">Y 类文献</SelectItem>
+                          <SelectItem value="A">A 类文献</SelectItem>
                           <SelectItem value="EXCLUDE">不纳入报告</SelectItem>
                           <SelectItem value="REVIEW_REQUIRED">
                             待人工复核
@@ -767,7 +833,8 @@ export function ReportWorkspace() {
                             ? classifications.find(
                                 (entry) =>
                                   entry.patent.id ===
-                                  item.classification.metrics?.closestDocumentId,
+                                  item.classification.metrics
+                                    ?.closestDocumentId,
                               )?.patent.docNumber ||
                               item.classification.metrics.closestDocumentId
                             : "无"}
@@ -775,7 +842,9 @@ export function ReportWorkspace() {
                         <p>
                           关键缺口：
                           {item.classification.metrics.featureGapIds.length
-                            ? item.classification.metrics.featureGapIds.join("、")
+                            ? item.classification.metrics.featureGapIds.join(
+                                "、",
+                              )
                             : "无"}
                         </p>
                         <p>
@@ -807,7 +876,7 @@ export function ReportWorkspace() {
                     </p>
                   </div>
                 ))}
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button
                     disabled={busy}
                     onClick={() =>
@@ -936,7 +1005,7 @@ export function ReportWorkspace() {
                   />
                   属于公知常识或明显惯用手段
                 </label>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button
                     disabled={busy || !evaluation.pointName.trim()}
                     onClick={() =>
@@ -1008,7 +1077,7 @@ export function ReportWorkspace() {
                     onChange={(e) => setConclusion(e.target.value)}
                   />
                 </div>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <Button
                     disabled={busy || !conclusion.trim()}
                     onClick={() =>

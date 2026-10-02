@@ -142,3 +142,53 @@
     @apply bg-muted-foreground/40;
   }
 }
+
+/* Consistent keyboard access and compact-screen workspace layout. */
+@layer base {
+  :where(button, a, input, textarea, select, summary):focus-visible {
+    outline: 2px solid var(--ring);
+    outline-offset: 3px;
+  }
+  button,
+  input,
+  textarea,
+  select {
+    font: inherit;
+  }
+}
+@media (max-width: 1023px) {
+  .disclosure-panels {
+    display: block !important;
+  }
+  .disclosure-panels > [data-slot="resizable-handle"] {
+    display: none;
+  }
+  .disclosure-panels > [data-slot="resizable-panel"] {
+    display: none;
+  }
+  .mobile-view-assistant > .disclosure-assistant,
+  .mobile-view-document > .disclosure-document,
+  .mobile-view-outline > .disclosure-outline {
+    display: block;
+    height: 100%;
+    width: 100%;
+    overflow: auto !important;
+  }
+}
+@media (max-width: 639px) {
+  input,
+  textarea,
+  select {
+    font-size: 16px !important;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

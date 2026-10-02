@@ -1,4 +1,5 @@
 import { Pool, PoolConfig } from "pg";
+import { compilePatentFormula } from "./formula";
 
 export interface PatentSearchResult {
   id: string;
@@ -6,6 +7,7 @@ export interface PatentSearchResult {
   kind: string;
   title: string;
   abstract: string;
+  appDate: string;
   pubDate: string;
   applicant: string;
   ipcCodes: string[];
@@ -29,6 +31,7 @@ export interface PatentComparisonMaterial {
 export type PatentSortBy = "pub_date_desc" | "pub_date_asc" | "relevance";
 
 export interface PatentSearchParams {
+  formula?: string;
   id?: string;
   /** 关键词列表(命中标题或摘要任一即可) */
   keywords?: string[];
@@ -54,11 +57,11 @@ export interface PatentSearchParams {
 
 // 连接 patent_etl 库(中国专利 ETL)
 const poolConfig: PoolConfig = {
-  host: process.env.CNIPA_PG_HOST || "localhost",
-  port: parseInt(process.env.CNIPA_PG_PORT || "5432"),
-  user: process.env.CNIPA_PG_USER || "postgres",
-  password: process.env.CNIPA_PG_PASSWORD || "password",
-  database: process.env.CNIPA_PG_DB || "patent_etl",
+  host: process.env.CNIPA_PG_HOST,
+  port: parseInt(process.env.CNIPA_PG_PORT || "5432", 10),
+  user: process.env.CNIPA_PG_USER,
+  password: process.env.CNIPA_PG_PASSWORD,
+  database: process.env.CNIPA_PG_DB,
 };
 
 let pool: Pool | null = null;
@@ -218,6 +221,7 @@ export async function searchPatents(
   params: PatentSearchParams,
 ): Promise<PatentSearchResponse> {
   const {
+    formula,
     id,
     keywords = [],
     keywordMatch = "any",
@@ -236,6 +240,7 @@ export async function searchPatents(
 
   // 至少要有一个过滤条件,避免全表扫描
   if (
+    !formula &&
     !id &&
     !kw.length &&
     !ipc.length &&
@@ -252,6 +257,10 @@ export async function searchPatents(
     const conditions: string[] = [];
     const paramsArr: unknown[] = [];
     let paramIdx = 1;
+    if (formula) {
+      conditions.push(compilePatentFormula(formula, paramsArr));
+      paramIdx = paramsArr.length + 1;
+    }
     if (id) {
       paramsArr.push(id);
       conditions.push(`p.id = $${paramIdx}`);
@@ -337,6 +346,7 @@ export async function searchPatents(
         p.kind,
         p.title,
         p.abstract,
+        p.app_date,
         p.pub_date,
         (SELECT string_agg(name, '; ') FROM cnipa.patent_applicant WHERE patent_id = p.id) AS applicants,
         (SELECT string_agg(ipc_code, ', ') FROM cnipa.patent_ipc WHERE patent_id = p.id) AS ipc_codes
@@ -359,6 +369,7 @@ export async function searchPatents(
       kind: r.kind || "",
       title: r.title || "",
       abstract: r.abstract || "",
+      appDate: String(r.app_date || ""),
       pubDate:
         r.pub_date instanceof Date
           ? r.pub_date.toISOString().slice(0, 10)
