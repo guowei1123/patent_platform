@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { streamProposalText } from "./service";
+import {
+  inspectTechnicalSolution,
+  TechnicalSolutionPolicyError,
+} from "@/src/mastra/disclosure/technical-solution-policy";
 
 export const dynamic = "force-dynamic";
 
@@ -9,11 +13,11 @@ export async function POST(request: NextRequest) {
     const { text, optimizationType } = body;
 
     // 检查必填字段
-    if (!text) {
-      return NextResponse.json(
-        { error: "技术方案文本是必需的" },
-        { status: 400 },
-      );
+    const assessment = inspectTechnicalSolution(
+      typeof text === "string" ? text : "",
+    );
+    if (!assessment.ready) {
+      return NextResponse.json({ error: assessment.message }, { status: 400 });
     }
 
     // 调用服务处理
@@ -46,7 +50,15 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error("技术方案优化 API 处理错误:", error);
-    return NextResponse.json({ error: "服务器内部错误" }, { status: 500 });
+    return NextResponse.json(
+      {
+        error:
+          error instanceof TechnicalSolutionPolicyError
+            ? error.message
+            : "技术方案语言和格式优化暂未完成，原文未修改",
+      },
+      { status: error instanceof TechnicalSolutionPolicyError ? 422 : 500 },
+    );
   }
 }
 

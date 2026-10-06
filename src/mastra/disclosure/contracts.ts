@@ -48,10 +48,47 @@ export const issueSchema = z.object({
   severity: z.enum(["error", "warning"]),
   message: z.string().max(2000),
 });
+export const solutionBlocksSchema = z
+  .array(
+    z.object({
+      id: z.string().min(1).max(100),
+      content: z.string().max(40000),
+    }),
+  )
+  .max(40)
+  .superRefine((blocks, ctx) => {
+    if (
+      new Set(blocks.map((block) => block.id)).size !== blocks.length ||
+      blocks.map((block) => block.content).join("\n").length > 40000
+    )
+      ctx.addIssue({
+        code: "custom",
+        message: "方案分栏编号重复或总字数超过限制",
+      });
+  });
+export const keywordDefinitionsSchema = z
+  .array(
+    z.object({
+      term: z.string().min(1).max(300),
+      definition: z.string().max(3000),
+    }),
+  )
+  .max(30);
+export const writingStepSchema = z.number().int().min(0).max(4);
+export const technicalSolutionQuotesSchema = z
+  .array(
+    z.object({
+      sourceId: z.string(),
+      quote: z.string().min(1).max(40000),
+    }),
+  )
+  .max(40);
 export const patchSchema = z.object({
   section: sectionKeySchema,
   content: z.string().max(40000),
   reason: z.string().max(2000),
+  solutionBlocks: solutionBlocksSchema.optional(),
+  sourceQuotes: technicalSolutionQuotesSchema.optional(),
 });
 export const sectionImpactSchema = z.object({
   sourceSection: sectionKeySchema,
@@ -98,6 +135,19 @@ export const modelResultSchema = z.object({
   questions: z.array(z.string().max(1000)).max(3),
   patches: z.array(patchSchema).max(8),
   issues: z.array(issueSchema).max(40),
+  technicalSolutionQuotes: technicalSolutionQuotesSchema.optional(),
+  keywords: keywordDefinitionsSchema.optional(),
+  imageChecks: z
+    .array(
+      z.object({
+        id: z.string().uuid(),
+        detection: z.enum(["passed", "warning", "failed", "pending"]),
+        reason: z.string().max(2000),
+        review: imageReviewSchema.optional(),
+      }),
+    )
+    .max(10)
+    .optional(),
 });
 export const imageSchema = z.object({
   id: z.string().uuid(),
@@ -109,6 +159,11 @@ export const imageSchema = z.object({
 });
 export const stateSchema = z.object({
   sections: sectionsSchema,
+  writingStep: writingStepSchema.optional(),
+  generatedSections: z.array(sectionKeySchema).max(8).optional(),
+  solutionBlocks: solutionBlocksSchema.optional(),
+  keywords: keywordDefinitionsSchema.optional(),
+  technicalSolutionQuotes: technicalSolutionQuotesSchema.optional(),
   sources: z.array(sourceSchema).max(150),
   facts: z.array(factSchema).max(150),
   questions: z.array(z.string()).max(3),
@@ -149,10 +204,24 @@ export const commandSchema = z
       "check-images",
       "search-patents",
       "analyze-patents",
+      "save-step",
+      "generate-background",
+      "generate-benefits",
+      "optimize-solution",
+      "explain-terms",
     ]),
     message: z.string().trim().max(20000).default(""),
     section: sectionKeySchema.optional(),
     content: z.string().max(40000).optional(),
+    writingStep: writingStepSchema.optional(),
+    sections: sectionsSchema.partial().optional(),
+    solutionBlocks: solutionBlocksSchema.optional(),
+    blockId: z.string().min(1).max(100).optional(),
+    keywords: keywordDefinitionsSchema.optional(),
+    captions: z
+      .array(z.object({ id: z.string().uuid(), caption: z.string().max(1000) }))
+      .max(10)
+      .optional(),
     restoreVersion: z.number().int().nonnegative().optional(),
     source: sourceSchema.optional(),
     image: imageSchema.optional(),

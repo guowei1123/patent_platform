@@ -26,6 +26,14 @@ export async function exportDisclosure(
   const paragraphs = [
     `<w:p><w:r><w:t>交底书版本：${version}${state.issues.length || state.questions.length ? "（含待复核事项）" : ""}</w:t></w:r></w:p>`,
   ];
+  if (state.keywords?.length) {
+    paragraphs.push("<w:p><w:r><w:t>关键术语释义</w:t></w:r></w:p>");
+    state.keywords.forEach((item) =>
+      paragraphs.push(
+        `<w:p><w:r><w:t>${escapeXml(`${item.term}：${item.definition}`)}</w:t></w:r></w:p>`,
+      ),
+    );
+  }
   const existingIds = Array.from(
     document.matchAll(/<wp:docPr[^>]*\bid="(\d+)"/g),
     (m) => Number(m[1]),

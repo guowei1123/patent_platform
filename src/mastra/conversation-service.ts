@@ -9,6 +9,7 @@ export interface ConversationRecord {
   resourceId: string;
   type: ConversationType;
   title: string;
+  titleIsCustom: boolean;
   status: string;
   activeRunId: string | null;
   pendingApproval: unknown;
@@ -30,6 +31,7 @@ async function ensureTables() {
           resource_id TEXT NOT NULL,
           type TEXT NOT NULL CHECK (type IN ('qa', 'search', 'report', 'disclosure', 'analysis', 'search_formula')),
           title TEXT NOT NULL,
+          title_is_custom BOOLEAN NOT NULL DEFAULT FALSE,
           status TEXT NOT NULL DEFAULT 'active',
           active_run_id TEXT,
           pending_approval JSONB,
@@ -42,6 +44,7 @@ async function ensureTables() {
         CREATE INDEX IF NOT EXISTS agent_conversations_resource_updated_idx
           ON mastra_agent.agent_conversations(resource_id, updated_at DESC);
         ALTER TABLE mastra_agent.agent_conversations ADD COLUMN IF NOT EXISTS search_results JSONB;
+        ALTER TABLE mastra_agent.agent_conversations ADD COLUMN IF NOT EXISTS title_is_custom BOOLEAN NOT NULL DEFAULT FALSE;
         ALTER TABLE mastra_agent.agent_conversations
           DROP CONSTRAINT IF EXISTS agent_conversations_type_check;
         ALTER TABLE mastra_agent.agent_conversations
@@ -65,6 +68,7 @@ function toRecord(row: Record<string, unknown>): ConversationRecord {
     resourceId: String(row.resource_id),
     type: row.type as ConversationType,
     title: String(row.title),
+    titleIsCustom: row.title_is_custom === true,
     status: String(row.status),
     activeRunId: row.active_run_id ? String(row.active_run_id) : null,
     pendingApproval: row.pending_approval,
@@ -137,6 +141,7 @@ export async function updateConversation(
     Pick<
       ConversationRecord,
       | "title"
+      | "titleIsCustom"
       | "status"
       | "activeRunId"
       | "pendingApproval"
@@ -155,6 +160,7 @@ export async function updateConversation(
       pending_approval = CASE WHEN $7 THEN $8::jsonb ELSE pending_approval END,
       last_message_preview = COALESCE($9, last_message_preview),
       search_results = CASE WHEN $10 THEN $11::jsonb ELSE search_results END,
+      title_is_custom = COALESCE($12, title_is_custom),
       updated_at = NOW(), expires_at = NOW() + INTERVAL '30 days'
      WHERE id = $1 AND resource_id = $2 RETURNING *`,
     [
@@ -173,6 +179,7 @@ export async function updateConversation(
       patch.searchResults === undefined
         ? null
         : JSON.stringify(patch.searchResults),
+      patch.titleIsCustom ?? null,
     ],
   );
   return row ? toRecord(row) : null;

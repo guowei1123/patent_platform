@@ -38,7 +38,7 @@ export async function PATCH(
     const conversation = await updateConversation(
       await getAnonymousResourceId(),
       params.id,
-      { title: input.title },
+      { title: input.title, titleIsCustom: true },
     );
     return conversation
       ? NextResponse.json(conversation)

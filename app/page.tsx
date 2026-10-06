@@ -5,6 +5,11 @@ import { useSearchParams } from "next/navigation";
 import { ChevronDown, ChevronUp, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { ChatInput } from "@/components/chat-input";
+import {
+  DisclosureGuidedWorkspace,
+  type DisclosureWorkspaceHandle,
+} from "@/components/disclosure/disclosure-guided-workspace";
+import type { DisclosureTask } from "@/src/mastra/disclosure/contracts";
 import { ChatMessage, type Message } from "@/components/chat-message";
 import {
   ChatSidebar,
@@ -85,6 +90,19 @@ export function AssistantWorkspace({ mode }: { mode: "qa" | "search" }) {
     { id: string; position: number; label: string }[]
   >([]);
   const [activeMessageId, setActiveMessageId] = useState<string | null>(null);
+  const [disclosureOpen, setDisclosureOpen] = useState(false);
+  const [disclosureMounted, setDisclosureMounted] = useState(false);
+  const [selectedDisclosureId, setSelectedDisclosureId] = useState<
+    string | null
+  >(null);
+  const [activeDisclosureId, setActiveDisclosureId] = useState<string | null>(
+    null,
+  );
+  const [disclosureBusy, setDisclosureBusy] = useState(false);
+  const [disclosureRequestKey, setDisclosureRequestKey] = useState(0);
+  const disclosureRef = useRef<DisclosureWorkspaceHandle>(null);
+  const startingNewChat = useRef(false);
+  const [chatSessionKey, setChatSessionKey] = useState(0);
 
   const updateMessageNavigator = useCallback(() => {
     const container = scrollAreaRef.current;
@@ -342,12 +360,32 @@ export function AssistantWorkspace({ mode }: { mode: "qa" | "search" }) {
     }
   };
 
-  const handleNewChat = () => {
-    setConversationId(null);
-    setMessages([]);
-    setResults([]);
-    setApproval(null);
-    setEditingStrategy(false);
+  const handleNewChat = async () => {
+    if (startingNewChat.current) return;
+    startingNewChat.current = true;
+    try {
+      if (
+        disclosureRef.current &&
+        !(await disclosureRef.current.flushDraft())
+      ) {
+        toast.error("交底书尚未保存，保存完成后再新建问答");
+        return;
+      }
+      setDisclosureOpen(false);
+      setDisclosureMounted(false);
+      setSelectedDisclosureId(null);
+      setActiveDisclosureId(null);
+      setDisclosureBusy(false);
+      setDisclosureRequestKey(0);
+      setConversationId(null);
+      setMessages([]);
+      setResults([]);
+      setApproval(null);
+      setEditingStrategy(false);
+      setChatSessionKey((key) => key + 1);
+    } finally {
+      startingNewChat.current = false;
+    }
   };
 
   const handleDeleteConversation = async (id: string) => {
@@ -358,6 +396,12 @@ export function AssistantWorkspace({ mode }: { mode: "qa" | "search" }) {
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error || "删除对话失败");
       if (id === conversationId) handleNewChat();
+      if (id === activeDisclosureId) {
+        setDisclosureOpen(false);
+        setDisclosureMounted(false);
+        setSelectedDisclosureId(null);
+        setActiveDisclosureId(null);
+      }
       await loadConversations();
       toast.success("已删除历史对话");
     } catch (error) {
@@ -388,6 +432,7 @@ export function AssistantWorkspace({ mode }: { mode: "qa" | "search" }) {
   };
 
   const handleSelectConversation = async (id: string) => {
+    setDisclosureOpen(false);
     try {
       const response = await fetch(`/api/agent/conversations/${id}`);
       if (!response.ok) throw new Error("读取对话失败");
@@ -430,22 +475,48 @@ export function AssistantWorkspace({ mode }: { mode: "qa" | "search" }) {
     void handleSelectConversation(requestedConversationId);
   }, [requestedConversationId]);
 
+  const openDisclosure = (id?: string) => {
+    if (isLoading || approval || (id && disclosureBusy)) return;
+    if (id) {
+      setSelectedDisclosureId(id);
+      setDisclosureRequestKey((key) => key + 1);
+    }
+    setDisclosureMounted(true);
+    setDisclosureOpen(true);
+  };
+  const handleDisclosureTask = useCallback((next: DisclosureTask) => {
+    setActiveDisclosureId(next.conversationId);
+    if (next.status === "idle") void loadConversations().catch(() => {});
+  }, []);
+
   return (
     <div className="flex h-dvh min-h-0 overflow-hidden bg-background">
       <ChatSidebar
         conversations={conversations}
-        activeConversationId={conversationId}
+        activeConversationId={
+          disclosureOpen ? activeDisclosureId : conversationId
+        }
         onNewChat={handleNewChat}
         onSelectConversation={handleSelectConversation}
         onDeleteConversation={handleDeleteConversation}
         onRenameConversation={handleRenameConversation}
+        onOpenDisclosure={openDisclosure}
+        disclosureBusy={disclosureBusy}
         mode={mode}
       />
       <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
         <header className="flex min-h-14 shrink-0 flex-wrap items-center py-3 border-b border-border bg-card px-5 text-sm text-muted-foreground">
-          {mode === "qa" ? "通用问答" : "专利检索"} · 历史记录保存 30 天
+          {disclosureOpen
+            ? "专利交底书"
+            : mode === "qa"
+              ? "通用问答"
+              : "专利检索"}{" "}
+          · 历史记录保存 30 天
         </header>
-        <main className="flex min-h-0 flex-1 flex-col overflow-hidden">
+        <main
+          className={`${disclosureOpen ? "hidden" : "flex"} min-h-0 flex-1 flex-col overflow-hidden`}
+          data-chat-workspace
+        >
           <div className="relative h-0 min-h-0 flex-1 overflow-hidden">
             <div
               className="h-full overflow-y-auto overscroll-contain custom-scrollbar"
@@ -466,13 +537,6 @@ export function AssistantWorkspace({ mode }: { mode: "qa" | "search" }) {
                       ? "例如：技术交底书需要包含哪些内容？"
                       : "例如：电池低温预热控制方法，重点关注温度检测与加热策略。"}
                   </p>
-                  <div className="mt-6 w-full max-w-3xl">
-                    <ChatInput
-                      onSend={handleSend}
-                      mode={mode}
-                      disabled={isLoading || Boolean(approval)}
-                    />
-                  </div>
                 </div>
               ) : (
                 <div>
@@ -752,16 +816,33 @@ export function AssistantWorkspace({ mode }: { mode: "qa" | "search" }) {
               </nav>
             )}
           </div>
-          {messages.length > 0 && (
-            <div className="shrink-0 border-t bg-background">
-              <ChatInput
-                onSend={handleSend}
-                mode={mode}
-                disabled={isLoading || Boolean(approval)}
-              />
-            </div>
-          )}
+          <div className="shrink-0 bg-background">
+            <ChatInput
+              key={chatSessionKey}
+              onSend={handleSend}
+              mode={mode}
+              disabled={isLoading || Boolean(approval)}
+              onSelectDisclosure={() => openDisclosure()}
+            />
+          </div>
         </main>
+        {disclosureMounted && (
+          <div
+            className={`${disclosureOpen ? "flex" : "hidden"} min-h-0 min-w-0 flex-1 flex-col overflow-hidden`}
+            data-inline-disclosure
+          >
+            <DisclosureGuidedWorkspace
+              ref={disclosureRef}
+              embedded
+              active={disclosureOpen}
+              initialConversationId={selectedDisclosureId}
+              requestKey={disclosureRequestKey}
+              onExit={() => setDisclosureOpen(false)}
+              onTaskChange={handleDisclosureTask}
+              onBusyChange={setDisclosureBusy}
+            />
+          </div>
+        )}
       </div>
     </div>
   );

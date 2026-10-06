@@ -6,11 +6,24 @@ export const dynamic = "force-dynamic";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { inventionName, technicalField, existingProblems } = body;
+    const {
+      inventionName,
+      technicalField,
+      existingProblems,
+      userDraft,
+      technicalSolution,
+    } = body;
 
-    if (!inventionName || !technicalField) {
+    if (
+      !inventionName ||
+      !technicalField ||
+      typeof userDraft !== "string" ||
+      !userDraft.trim() ||
+      typeof technicalSolution !== "string" ||
+      !technicalSolution.trim()
+    ) {
       return NextResponse.json(
-        { error: "发明名称和技术领域是必需的" },
+        { error: "请先提供背景原稿和核心技术方案，并填写发明名称、技术领域" },
         { status: 400 },
       );
     }
@@ -18,8 +31,9 @@ export async function POST(request: NextRequest) {
     const stream = await streamBackground({
       inventionName,
       technicalField,
-      existingProblems:
-        existingProblems || "（未提供具体问题，请根据通用情况分析）",
+      userDraft,
+      technicalSolution,
+      existingProblems: existingProblems || userDraft,
     });
 
     const encoder = new TextEncoder();

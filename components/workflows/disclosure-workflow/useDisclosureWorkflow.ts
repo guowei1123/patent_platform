@@ -7,6 +7,7 @@ import type {
   ProblemDetectionResult,
 } from "./types";
 import { callStreamAPI, fileToBase64, detectImage } from "./service";
+import { inspectTechnicalSolution } from "@/src/mastra/disclosure/technical-solution-policy";
 
 export function useDisclosureWorkflow() {
   const [step, setStep] = useState<1 | 2 | 3 | 4 | 5>(1);
@@ -247,7 +248,12 @@ export function useDisclosureWorkflow() {
     const block = contentBlocks.find((b) => b.id === id);
     if (!block || !block.content.trim()) {
       toast.error("请先输入要优化的内容");
-      return;
+      return false;
+    }
+    const assessment = inspectTechnicalSolution(block.content);
+    if (!assessment.ready) {
+      toast.error(assessment.message);
+      return false;
     }
 
     setOptimizingBlockId(id);
@@ -275,8 +281,14 @@ export function useDisclosureWorkflow() {
       );
 
       toast.success("文本优化完成");
+      return true;
     } catch (error) {
-      toast.error("文本优化失败，请稍后重新点击优化按钮");
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : "语言和格式优化未完成，原文已保留",
+      );
+      return false;
     } finally {
       setOptimizingBlockId(null);
     }
@@ -371,7 +383,7 @@ export function useDisclosureWorkflow() {
     try {
       // 逐个优化文本块
       for (const block of textBlocks) {
-        await handleOptimizeBlock(block.id);
+        if (!(await handleOptimizeBlock(block.id))) return;
       }
 
       // 自动提取关键词

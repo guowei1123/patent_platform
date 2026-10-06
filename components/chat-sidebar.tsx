@@ -90,6 +90,8 @@ export function ChatSidebar({
   onDeleteConversation,
   onRenameConversation,
   mode,
+  onOpenDisclosure,
+  disclosureBusy = false,
 }: {
   conversations: SidebarConversation[];
   activeConversationId: string | null;
@@ -104,6 +106,8 @@ export function ChatSidebar({
     | "disclosure"
     | "analysis"
     | "search_formula";
+  onOpenDisclosure?: (conversationId?: string) => void;
+  disclosureBusy?: boolean;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -272,10 +276,14 @@ export function ChatSidebar({
                             "bg-sidebar-accent",
                         )}
                       >
-                        {folder === mode ? (
+                        {folder === mode ||
+                        (folder === "disclosure" && onOpenDisclosure) ? (
                           <button
+                            disabled={folder === "disclosure" && disclosureBusy}
                             onClick={() => {
-                              onSelectConversation(item.id);
+                              if (folder === "disclosure" && onOpenDisclosure)
+                                onOpenDisclosure(item.id);
+                              else onSelectConversation(item.id);
                               setMobileOpen(false);
                             }}
                             className="flex min-w-0 flex-1 items-start gap-2 pr-9 py-2 pl-2 text-left text-sm"

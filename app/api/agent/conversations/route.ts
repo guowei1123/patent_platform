@@ -6,6 +6,7 @@ import {
   createConversation,
   listConversations,
 } from "@/src/mastra/conversation-service";
+import { listDisclosureTasks } from "@/src/mastra/disclosure/task-service";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,11 +18,27 @@ export async function GET(request: Request) {
     );
     if (!type.success && new URL(request.url).searchParams.has("type"))
       return NextResponse.json({ error: "对话类型不正确" }, { status: 400 });
+    const resourceId = await getAnonymousResourceId();
+    const items = await listConversations(
+      resourceId,
+      type.success ? type.data : undefined,
+    );
+    const disclosureIds = items
+      .filter((item) => item.type === "disclosure")
+      .map((item) => item.id);
+    const titles = new Map(
+      disclosureIds.length
+        ? (await listDisclosureTasks(resourceId, disclosureIds)).map((task) => [
+            task.conversationId,
+            task.title,
+          ])
+        : [],
+    );
     return NextResponse.json({
-      items: await listConversations(
-        await getAnonymousResourceId(),
-        type.success ? type.data : undefined,
-      ),
+      items: items.map((item) => ({
+        ...item,
+        title: titles.get(item.id) ?? item.title,
+      })),
     });
   } catch (error) {
     console.error("Conversation list failed", error);

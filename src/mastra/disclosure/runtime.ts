@@ -1,12 +1,18 @@
 import { mastra } from "../index";
 import { stateSchema, type DisclosureCommand } from "./contracts";
 import { mergeSectionImpacts, sectionImpactsFor } from "./dependencies";
-import { crossCheckDisclosureImage } from "./image-cross-check";
+import { saveDisclosureWritingStep } from "./writing-flow";
+import { isUserChapterSection } from "./chapter-policy";
 import {
   analyzeDisclosurePatentEvidence,
   runDisclosurePatentSearch,
 } from "./patent-search";
 import { checkDisclosure } from "./quality";
+import {
+  getUserTechnicalSolution,
+  inspectTechnicalSolution,
+  isTechnicalSolutionPolish,
+} from "./technical-solution-policy";
 import {
   claimDisclosure,
   commitDisclosure,
@@ -14,6 +20,7 @@ import {
   getDisclosureTask,
   getDisclosureVersion,
   getDisclosureAsset,
+  renewDisclosureLease,
 } from "./task-service";
 
 export class DisclosureRequestError extends Error {
@@ -38,6 +45,16 @@ export async function executeDisclosure(
       "任务正在处理或版本已更新，请重新加载后继续",
       409,
     );
+  let renewing = false;
+  const leaseTimer = setInterval(() => {
+    if (renewing) return;
+    renewing = true;
+    void renewDisclosureLease(resourceId, id, command.operationId)
+      .catch(() => {})
+      .finally(() => {
+        renewing = false;
+      });
+  }, 30000);
   try {
     let state = stateSchema.parse(task.state);
     if (command.source) state.sources.push(command.source);
@@ -62,13 +79,53 @@ export async function executeDisclosure(
         "累计材料超过 15 万字，请新建任务并使用精简材料",
         413,
       );
-    if (["message", "draft", "revise", "check"].includes(command.action)) {
+    if (
+      [
+        "message",
+        "draft",
+        "revise",
+        "check",
+        "generate-background",
+        "generate-benefits",
+        "optimize-solution",
+        "explain-terms",
+        "check-images",
+      ].includes(command.action)
+    ) {
       stateSchema.parse(state);
+      const imageAssets = [
+        "check",
+        "check-images",
+        "optimize-solution",
+      ].includes(command.action)
+        ? (
+            await Promise.all(
+              state.images.map(async (image) => {
+                const asset = await getDisclosureAsset(
+                  resourceId,
+                  id,
+                  image.id,
+                );
+                if (!asset || !["image/png", "image/jpeg"].includes(asset.mime))
+                  return null;
+                return {
+                  id: image.id,
+                  mime: asset.mime as "image/png" | "image/jpeg",
+                  base64: asset.data.toString("base64"),
+                };
+              }),
+            )
+          ).filter((item) => item !== null)
+        : undefined;
       const run = await mastra.getWorkflow("disclosureWorkflow").createRun();
-      const result = await run.start({ inputData: { state, command } });
+      const result = await run.start({
+        inputData: { state, command, imageAssets },
+      });
       if (result.status !== "success") throw new Error("交底书生成步骤失败");
       state = stateSchema.parse(result.result);
     } else {
+      if (command.action === "save-step")
+        state = saveDisclosureWritingStep(state, command);
       if (command.action === "restore") {
         const snapshot = await getDisclosureVersion(
           resourceId,
@@ -86,11 +143,41 @@ export async function executeDisclosure(
             : state.suggestions.find((p) => p.section === section)?.content;
         if (content === undefined)
           throw new DisclosureRequestError("修改建议已失效", 409);
+        if (section === "technicalSolution" && command.action === "accept") {
+          const original = getUserTechnicalSolution(state);
+          if (
+            !inspectTechnicalSolution(original).ready ||
+            !isTechnicalSolutionPolish(original, content) ||
+            (state.suggestions.find((patch) => patch.section === section)
+              ?.solutionBlocks &&
+              state.suggestions
+                .find((patch) => patch.section === section)!
+                .solutionBlocks!.map((block) => block.content)
+                .join("\n") !== content)
+          )
+            throw new DisclosureRequestError(
+              "该建议包含技术内容变化或缺少用户原文，不能采用。请自行填写技术方案后再进行语言和格式优化。",
+              400,
+            );
+        }
         Object.assign(state.sections, { [section]: content });
+        if (section === "technicalSolution") {
+          const suggestion = state.suggestions.find(
+            (patch) => patch.section === section,
+          );
+          state.solutionBlocks =
+            command.action === "accept" && suggestion?.solutionBlocks
+              ? suggestion.solutionBlocks
+              : [{ id: "solution", content }];
+        }
         if (!state.lockedSections.includes(section))
           state.lockedSections.push(section);
         state.suggestions = state.suggestions.filter(
-          (p) => p.section !== section,
+          (p) =>
+            p.section !== section &&
+            !(
+              section === "technicalSolution" && isUserChapterSection(p.section)
+            ),
         );
         if (command.action === "edit")
           state.sources.push({
@@ -111,45 +198,6 @@ export async function executeDisclosure(
         state.images = state.images.filter(
           (image) => image.id !== command.imageId,
         );
-      if (command.action === "check-images") {
-        if (!state.images.length)
-          throw new DisclosureRequestError("请先上传至少一张附图", 400);
-        state.images = await Promise.all(
-          state.images.map(async (image) => {
-            const asset = await getDisclosureAsset(resourceId, id, image.id);
-            if (!asset)
-              return {
-                ...image,
-                review: {
-                  status: "failed" as const,
-                  summary: "图片原文件不存在，无法完成图文交叉检查",
-                  detectedLabels: [],
-                  issues: ["请重新上传该附图后再检查。"],
-                },
-              };
-            try {
-              return {
-                ...image,
-                review: await crossCheckDisclosureImage({
-                  imageUrl: `data:${asset.mime};base64,${asset.data.toString("base64")}`,
-                  caption: image.caption,
-                  technicalSolution: state.sections.technicalSolution,
-                }),
-              };
-            } catch {
-              return {
-                ...image,
-                review: {
-                  status: "failed" as const,
-                  summary: "图文交叉检查未完成",
-                  detectedLabels: [],
-                  issues: ["图像识别服务不可用或图片不可读，请稍后重试。"],
-                },
-              };
-            }
-          }),
-        );
-      }
       if (command.action === "search-patents") {
         const search = await runDisclosurePatentSearch({
           id: command.operationId,
@@ -172,7 +220,9 @@ export async function executeDisclosure(
         });
         state.patentInsights = [
           insight,
-          ...state.patentInsights.filter((item) => item.searchId !== insight.searchId),
+          ...state.patentInsights.filter(
+            (item) => item.searchId !== insight.searchId,
+          ),
         ].slice(0, 10);
         state.messages.push({
           id: command.operationId,
@@ -180,8 +230,21 @@ export async function executeDisclosure(
           text: "已生成基于所选检索专利的背景与差异说明建议。请逐项审阅后，手动载入背景章节或自行编辑；技术方案不会被此操作改写。",
         });
       }
+      state.suggestions = state.suggestions.filter(
+        (patch) =>
+          patch.section !== "technicalSolution" ||
+          (inspectTechnicalSolution(getUserTechnicalSolution(state)).ready &&
+            isTechnicalSolutionPolish(
+              getUserTechnicalSolution(state),
+              patch.content,
+            )),
+      );
       state.issues = checkDisclosure(state);
-      if (["edit", "accept", "image", "remove-image", "check-images"].includes(command.action)) {
+      if (
+        ["edit", "accept", "image", "remove-image", "check-images"].includes(
+          command.action,
+        )
+      ) {
         state.issues.push({
           section: "technicalSolution",
           severity: "warning",
@@ -195,5 +258,7 @@ export async function executeDisclosure(
   } catch (error) {
     await failDisclosure(resourceId, id, command.operationId);
     throw error;
+  } finally {
+    clearInterval(leaseTimer);
   }
 }

@@ -14,6 +14,7 @@ async function ensureTables() {
     ready = mastraStore.db
       .none(
         `
+    ALTER TABLE mastra_agent.agent_conversations ADD COLUMN IF NOT EXISTS title_is_custom BOOLEAN NOT NULL DEFAULT FALSE;
     CREATE TABLE IF NOT EXISTS mastra_agent.disclosure_tasks (
       id UUID PRIMARY KEY, conversation_id UUID NOT NULL REFERENCES mastra_agent.agent_conversations(id) ON DELETE CASCADE,
       resource_id TEXT NOT NULL, version INTEGER NOT NULL DEFAULT 0, state JSONB NOT NULL,
@@ -97,18 +98,27 @@ export async function getDisclosureTaskByConversationId(
   );
   return row ? record(row) : null;
 }
-export async function listDisclosureTasks(resourceId: string) {
+export async function listDisclosureTasks(
+  resourceId: string,
+  conversationIds?: string[],
+) {
   await ensureTables();
   return mastraStore.db.any<{
     id: string;
+    conversationId: string;
     title: string;
     version: number;
     updatedAt: string;
   }>(
-    `SELECT d.id,COALESCE(NULLIF(d.state->'sections'->>'inventionName',''),c.title) AS title,d.version,d.updated_at AS "updatedAt"
+    `SELECT d.id,d.conversation_id AS "conversationId",
+    CASE WHEN c.title_is_custom THEN c.title
+      ELSE COALESCE(NULLIF(LEFT(BTRIM(d.state->'sections'->>'inventionName'),80),''),'新交底书') END AS title,
+    d.version,d.updated_at AS "updatedAt"
     FROM mastra_agent.disclosure_tasks d JOIN mastra_agent.agent_conversations c ON c.id=d.conversation_id
-    WHERE d.resource_id=$1 AND d.expires_at>NOW() ORDER BY d.updated_at DESC LIMIT 50`,
-    [resourceId],
+    WHERE d.resource_id=$1 AND d.expires_at>NOW()
+      AND ($2::uuid[] IS NULL OR d.conversation_id=ANY($2::uuid[]))
+    ORDER BY d.updated_at DESC LIMIT 50`,
+    [resourceId, conversationIds ?? null],
   );
 }
 export async function claimDisclosure(
@@ -131,6 +141,19 @@ export async function claimDisclosure(
   );
   return row ? record(row) : null;
 }
+/** 工具链执行期间续租，不改变文稿版本，也不能续租其他用户或操作的任务。 */
+export async function renewDisclosureLease(
+  resourceId: string,
+  id: string,
+  operationId: string,
+) {
+  await mastraStore.db.none(
+    `UPDATE mastra_agent.disclosure_tasks SET lease_until=NOW()+INTERVAL '4 minutes'
+     WHERE id=$1 AND resource_id=$2 AND operation_id=$3 AND status='running'`,
+    [id, resourceId, operationId],
+  );
+}
+
 export async function commitDisclosure(
   resourceId: string,
   id: string,
@@ -144,8 +167,11 @@ export async function commitDisclosure(
       last_operation_id=$4,operation_id=NULL,lease_until=NULL,updated_at=NOW(),expires_at=NOW()+INTERVAL '30 days'
     WHERE id=$1 AND resource_id=$2 AND version=$3 AND operation_id=$4 AND status='running' RETURNING *)
     , snapshot AS (INSERT INTO mastra_agent.disclosure_versions(task_id,version,state) SELECT id,version,state FROM updated)
-    , conversation AS (UPDATE mastra_agent.agent_conversations SET updated_at=NOW(),expires_at=NOW()+INTERVAL '30 days'
-      WHERE id IN (SELECT conversation_id FROM updated))
+    , conversation AS (UPDATE mastra_agent.agent_conversations c SET
+      title=CASE WHEN c.title_is_custom THEN c.title
+        ELSE COALESCE(NULLIF(LEFT(BTRIM(updated.state->'sections'->>'inventionName'),80),''),'新交底书') END,
+      updated_at=NOW(),expires_at=NOW()+INTERVAL '30 days'
+      FROM updated WHERE c.id=updated.conversation_id AND c.resource_id=$2)
     SELECT * FROM updated`,
     [
       id,

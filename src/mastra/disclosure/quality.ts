@@ -7,11 +7,29 @@ import {
   type DisclosureCommand,
 } from "./contracts";
 import { mergeSectionImpacts, sectionImpactsFor } from "./dependencies";
+import {
+  getUserTechnicalSolution,
+  inspectTechnicalSolution,
+  isTechnicalSolutionPolish,
+  applyExtractedUserSolution,
+} from "./technical-solution-policy";
+import {
+  applyExtractedUserChapters,
+  getUserChapter,
+  isUserChapterSection,
+} from "./chapter-policy";
 
 export function checkDisclosure(
   state: DisclosureState,
 ): DisclosureState["issues"] {
   const issues: DisclosureState["issues"] = [];
+  const assessment = inspectTechnicalSolution(getUserTechnicalSolution(state));
+  if (!assessment.ready)
+    issues.push({
+      section: "technicalSolution",
+      severity: "error",
+      message: assessment.message,
+    });
   for (const section of [
     "inventionName",
     "technicalField",
@@ -96,7 +114,16 @@ export function applyModelResult(
   result: ModelResult,
   command: DisclosureCommand,
 ): DisclosureState {
-  const next = structuredClone(state);
+  const next = applyExtractedUserChapters(
+    applyExtractedUserSolution(state, result),
+    result,
+  );
+  if (result.keywords) next.keywords = result.keywords;
+  if (result.imageChecks)
+    next.images = next.images.map((image) => {
+      const checked = result.imageChecks?.find((item) => item.id === image.id);
+      return checked ? { ...image, ...checked } : image;
+    });
   // 逐字引文校验，模型推断不能伪装成来源事实。
   next.facts = result.facts.filter((fact) =>
     next.sources.some(
@@ -107,12 +134,84 @@ export function applyModelResult(
   next.questions = result.questions.map((question) =>
     question.replace(/^\s*\d+[.、．)）]\s*/, ""),
   );
-  if (command.action !== "check") next.suggestions = [];
+  const targetSections =
+    command.action === "revise"
+      ? [command.section]
+      : command.action === "generate-background"
+        ? ["techBackground"]
+        : command.action === "generate-benefits"
+          ? ["beneficialEffects", "protectionPoints"]
+          : command.action === "optimize-solution"
+            ? ["technicalSolution"]
+            : [];
+  next.suggestions =
+    command.action === "check"
+      ? next.suggestions.filter(
+          (patch) =>
+            patch.section !== "technicalSolution" ||
+            (inspectTechnicalSolution(getUserTechnicalSolution(next)).ready &&
+              isTechnicalSolutionPolish(
+                getUserTechnicalSolution(next),
+                patch.content,
+              )),
+        )
+      : targetSections.length
+        ? next.suggestions.filter(
+            (patch) => !targetSections.includes(patch.section),
+          )
+        : [];
   if (command.action !== "check") {
     const directImpacts: DisclosureState["sectionImpacts"] = [];
     const suggestedImpacts: DisclosureState["sectionImpacts"] = [];
-    const reviewedSections = new Set<DisclosureState["sectionImpacts"][number]["affectedSection"]>();
+    const reviewedSections = new Set<
+      DisclosureState["sectionImpacts"][number]["affectedSection"]
+    >();
     for (const patch of result.patches) {
+      if (isUserChapterSection(patch.section)) {
+        if (
+          patch.sourceQuotes?.length &&
+          next.sections[patch.section] === patch.content &&
+          getUserChapter(next, patch.section)
+        )
+          continue;
+        if (
+          !getUserChapter(next, patch.section).trim() ||
+          !inspectTechnicalSolution(getUserTechnicalSolution(next)).ready
+        ) {
+          result.issues.push({
+            section: patch.section,
+            severity: "warning",
+            message: `请先提供${sectionLabels[patch.section]}原稿及完整核心方案，AI仅优化已有内容。`,
+          });
+          continue;
+        }
+      }
+      if (patch.section === "technicalSolution") {
+        const original = getUserTechnicalSolution(state);
+        if (
+          ((command.action === "revise" &&
+            command.section === "technicalSolution") ||
+            command.action === "optimize-solution") &&
+          inspectTechnicalSolution(original).ready &&
+          isTechnicalSolutionPolish(original, patch.content) &&
+          (!patch.solutionBlocks ||
+            patch.solutionBlocks.map((block) => block.content).join("\n") ===
+              patch.content)
+        ) {
+          next.suggestions.push({
+            ...patch,
+            reason: "仅优化用户原文的语言和格式，采用前请核对。",
+          });
+        } else {
+          result.issues.push({
+            section: "technicalSolution",
+            severity: "warning",
+            message:
+              "已拦截 AI 对核心技术方案的生成或改写，请由用户填写；AI 仅可优化已有原文的语言和格式。",
+          });
+        }
+        continue;
+      }
       const valid = sectionsSchema.safeParse({
         ...next.sections,
         [patch.section]: patch.content,
@@ -144,7 +243,10 @@ export function applyModelResult(
       if (command.action === "revise" && patch.section !== command.section) {
         next.suggestions.push(patch);
         suggestedImpacts.push(...sectionImpactsFor(patch.section, "suggested"));
-      } else if (next.lockedSections.includes(patch.section)) {
+      } else if (
+        isUserChapterSection(patch.section) ||
+        next.lockedSections.includes(patch.section)
+      ) {
         next.suggestions.push(patch);
         suggestedImpacts.push(...sectionImpactsFor(patch.section, "suggested"));
       } else {
@@ -157,6 +259,9 @@ export function applyModelResult(
           reviewedSections.add(patch.section);
         }
         Object.assign(next.sections, { [patch.section]: patch.content });
+        next.generatedSections = [
+          ...new Set([...(next.generatedSections || []), patch.section]),
+        ];
       }
     }
     next.sectionImpacts = mergeSectionImpacts(
@@ -167,6 +272,16 @@ export function applyModelResult(
     );
   }
   const checks = checkDisclosure(next);
+  const solutionAssessment = inspectTechnicalSolution(
+    getUserTechnicalSolution(next),
+  );
+  if (!solutionAssessment.ready)
+    next.questions = [
+      "请填写并保存核心技术方案：具体组成或输入、实现步骤或连接关系、输出或执行方式是什么？",
+      ...next.questions,
+    ]
+      .filter((question, index, all) => all.indexOf(question) === index)
+      .slice(0, 3);
   next.issues = [...checks, ...result.issues]
     .filter(
       (issue, index, all) =>
@@ -188,11 +303,7 @@ export function applyModelResult(
   next.messages.push({
     role: "assistant",
     id: command.operationId,
-    text:
-      !next.sections.technicalSolution &&
-      !next.suggestions.some((patch) => patch.section === "technicalSolution")
-        ? "已整理当前材料，尚未形成技术方案正文。请补充下列关键问题，或点击“生成初稿”先形成带待补充标记的文稿。"
-        : result.reply,
+    text: !solutionAssessment.ready ? solutionAssessment.message : result.reply,
   });
   return next;
 }

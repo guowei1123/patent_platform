@@ -93,12 +93,22 @@ test("模型将申请类型写成待补充句子时不阻断其他章节生成",
     command("draft"),
   );
   assert.equal(next.sections.applicationType, "");
-  assert.equal(next.sections.technicalSolution, "依据温差控制泵速");
+  assert.equal(next.sections.technicalSolution, "");
+  assert.ok(next.issues.some((issue) => issue.message.includes("已拦截")));
   assert.equal(stateSchema.safeParse(next).success, true);
 });
 test("缺少实验依据的百分比被拦截，不写入正文或建议", () => {
+  const state = initialState();
+  state.sections.technicalSolution =
+    "温度传感器采集温度，控制器比较温差并调节水泵转速。";
+  state.sections.beneficialEffects = "改善温度控制。";
+  state.sources = ["technicalSolution", "beneficialEffects"].map((section) => ({
+    id: section,
+    label: `用户编辑：${section}`,
+    text: state.sections[section],
+  }));
   const next = applyModelResult(
-    initialState(),
+    state,
     result({
       patches: [
         {
@@ -110,31 +120,56 @@ test("缺少实验依据的百分比被拦截，不写入正文或建议", () =>
     }),
     command("draft"),
   );
-  assert.equal(next.sections.beneficialEffects, "");
+  assert.equal(next.sections.beneficialEffects, "改善温度控制。");
   assert.equal(next.suggestions.length, 0);
   assert.ok(next.issues.some((i) => i.message.includes("已拦截")));
 });
 test("手工编辑章节保留原文，质量检查不丢失候选建议", () => {
   const state = initialState();
-  state.sections.technicalSolution = "用户已编辑内容";
+  state.sections.technicalSolution =
+    "温度传感器进行采集模组温度，控制器进行比较温差并调节水泵转速。";
+  state.sources = [
+    {
+      id: "original",
+      label: "用户编辑：technicalSolution",
+      text: state.sections.technicalSolution,
+    },
+  ];
   state.lockedSections = ["technicalSolution"];
   const next = applyModelResult(
     state,
     result({
       patches: [
-        { section: "technicalSolution", content: "候选内容", reason: "完善" },
+        {
+          section: "technicalSolution",
+          content: "温度传感器采集模组温度；控制器比较温差并调节水泵转速。",
+          reason: "语言整理",
+        },
       ],
     }),
-    command("draft"),
+    command("revise", { section: "technicalSolution" }),
   );
-  assert.equal(next.sections.technicalSolution, "用户已编辑内容");
-  assert.equal(next.suggestions[0].content, "候选内容");
+  assert.equal(
+    next.sections.technicalSolution,
+    state.sections.technicalSolution,
+  );
+  assert.equal(
+    next.suggestions[0].content,
+    "温度传感器采集模组温度；控制器比较温差并调节水泵转速。",
+  );
   const checked = applyModelResult(next, result(), command("check"));
   assert.equal(checked.suggestions.length, 1);
 });
 test("局部修订不自动覆盖其他章节", () => {
   const state = initialState();
   state.sections.techBackground = "原背景";
+  state.sections.technicalSolution =
+    "温度传感器采集温度，控制器比较温差并调节水泵转速。";
+  state.sources = ["technicalSolution", "techBackground"].map((section) => ({
+    id: section,
+    label: `用户编辑：${section}`,
+    text: state.sections[section],
+  }));
   const next = applyModelResult(
     state,
     result({
@@ -150,7 +185,10 @@ test("局部修订不自动覆盖其他章节", () => {
     command("revise", { section: "technicalSolution" }),
   );
   assert.equal(next.sections.techBackground, "原背景");
-  assert.equal(next.sections.technicalSolution, "修改后的方案");
+  assert.equal(
+    next.sections.technicalSolution,
+    state.sections.technicalSolution,
+  );
   assert.equal(next.suggestions[0].section, "techBackground");
 });
 test("未完成图片检测明确报告，非法申请类型无法保存", () => {
@@ -202,7 +240,9 @@ test("章节联动仅标记受影响章节，不改写正文", () => {
   state.sectionImpacts = mergeSectionImpacts([], impacts);
   assert.equal(state.sections.beneficialEffects, "原有益效果");
   assert.ok(
-    state.sectionImpacts.some((item) => item.affectedSection === "beneficialEffects"),
+    state.sectionImpacts.some(
+      (item) => item.affectedSection === "beneficialEffects",
+    ),
   );
   assert.ok(
     checkDisclosure(state).some((item) => item.message.includes("有益效果")),
@@ -252,6 +292,7 @@ test("Word 导出绑定版本并嵌入图片、关系、图号与复核事项", 
     },
   ];
   state.questions = ["请补充控制规则"];
+  state.keywords = [{ term: "温度传感器", definition: "测量温度的器件" }];
   const zip = new AdmZip(
     await exportDisclosure(state, [{ data, mime: "image/png" }], 3),
   );
@@ -259,6 +300,8 @@ test("Word 导出绑定版本并嵌入图片、关系、图号与复核事项", 
   assert.match(xml, /交底书版本：3/);
   assert.match(xml, /图1 冷却流程&lt;&amp;&gt;/);
   assert.match(xml, /请补充控制规则/);
+  assert.match(xml, /关键术语释义/);
+  assert.match(xml, /温度传感器：测量温度的器件/);
   assert.ok(zip.getEntry("word/media/disclosure-1.png"));
   assert.match(
     zip.readAsText("word/_rels/document.xml.rels"),
@@ -421,6 +464,16 @@ test(
       );
       response = await call(
         path,
+        command("edit", {
+          baseVersion: task.version,
+          section: "technicalSolution",
+          content: sample.sections.technicalSolution,
+        }),
+      );
+      assert.equal(response.status, 200, await response.clone().text());
+      task = (await response.json()).task;
+      response = await call(
+        path,
         command("draft", {
           baseVersion: task.version,
           message: "请生成完整交底书初稿，未知项保留待补充，不得编造实验数据。",
@@ -430,7 +483,7 @@ test(
       task = (await response.json()).task;
       assert.ok(
         task.state.sections.technicalSolution.length > 50,
-        "必须返回实际技术方案正文",
+        "必须保留用户提供的技术方案正文",
       );
       assert.ok(task.state.sections.inventionName.length > 0);
       assert.equal(

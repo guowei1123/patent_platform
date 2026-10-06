@@ -49,7 +49,7 @@ export function Step3TechSolution() {
 
         <p className="mb-4 text-sm text-muted-foreground">
           请详细描述您的技术方案，可以添加文字说明和配图。AI
-          将帮助您优化表述并识别专有词汇。
+          只能优化语言和格式并识别专有词汇，不会生成、补全或改变核心技术方案。内容空泛时，请先补充具体实现。
         </p>
 
         <div className="space-y-4">
@@ -99,7 +99,9 @@ export function Step3TechSolution() {
                           optimizingBlockId === block.id && "animate-pulse",
                         )}
                       />
-                      {optimizingBlockId === block.id ? "优化中..." : "AI 优化"}
+                      {optimizingBlockId === block.id
+                        ? "优化中..."
+                        : "优化语言和格式"}
                     </Button>
                   </div>
                 </div>
@@ -258,7 +260,7 @@ export function Step3TechSolution() {
               <Sparkles
                 className={cn("h-4 w-4", isRewriting && "animate-pulse")}
               />
-              {isRewriting ? "AI 处理中..." : "AI 优化全部"}
+              {isRewriting ? "AI 处理中..." : "优化全部语言和格式"}
             </Button>
           </div>
         </div>

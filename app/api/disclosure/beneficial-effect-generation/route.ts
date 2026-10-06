@@ -6,11 +6,17 @@ export const dynamic = "force-dynamic";
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { technicalBackground, technicalSolution } = body;
+    const { technicalBackground, technicalSolution, userDraft } = body;
 
-    if (!technicalBackground || !technicalSolution) {
+    if (
+      !technicalBackground ||
+      typeof technicalSolution !== "string" ||
+      !technicalSolution.trim() ||
+      typeof userDraft !== "string" ||
+      !userDraft.trim()
+    ) {
       return NextResponse.json(
-        { error: "技术背景和技术方案是必需的" },
+        { error: "请先提供有益效果原稿、技术背景和核心技术方案" },
         { status: 400 },
       );
     }
@@ -20,6 +26,7 @@ export async function POST(request: NextRequest) {
     const stream = await streamBeneficialEffects({
       technicalBackground,
       technicalSolution,
+      userDraft,
     });
 
     const readable = new ReadableStream({

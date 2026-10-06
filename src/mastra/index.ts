@@ -15,7 +15,7 @@ import { reportWorkflow } from "./workflows/report-workflow";
 import { disclosureAgent } from "./agents/disclosure-agent";
 import { disclosureWorkflow } from "./workflows/disclosure-workflow";
 import { searchFormulaWorkflow } from "./workflows/search-formula-workflow";
-import { checkDisclosureTool } from "./tools/disclosure-tools";
+import { disclosureTools } from "./tools/disclosure-tools";
 import { searchFormulaAgent } from "./agents/search-formula-agent";
 
 export const mastra = new Mastra({
@@ -35,6 +35,6 @@ export const mastra = new Mastra({
     generateSearchFormulaTool,
     searchPatentsTool,
     ...reportTools,
-    checkDisclosureTool,
+    ...disclosureTools,
   },
 });

@@ -10,7 +10,10 @@ export const callStreamAPI = async (
   });
 
   if (!response.ok) {
-    throw new Error("API调用失败");
+    const error = await response.json().catch(() => null);
+    throw new Error(
+      typeof error?.error === "string" ? error.error : "API调用失败",
+    );
   }
 
   const reader = response.body?.getReader();
